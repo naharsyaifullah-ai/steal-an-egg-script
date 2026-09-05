@@ -1,0 +1,18 @@
+# Lua / Luau
+*.luac
+bytecode/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Test artifacts
+/tmp/
+*_bundle.lua
+
+# Editor
+.vscode/
+.idea/
+*.swp
+.DS_Store
