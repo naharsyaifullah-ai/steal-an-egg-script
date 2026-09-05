@@ -23,6 +23,66 @@ toggle(pSteal, "Ambil telur tak dikenal", "telur di luar database tetap diambil"
 toggle(pSteal, "Prioritas telur mutasi", "Spirit Bloom 3x > Rainbow 2.5x > Golden 2x",
   function() return S.preferMutasi end, function(v) S.preferMutasi = v end)
 
+section(pSteal, "cara ambil (penting)")
+-- Kalau auto steal tidak pernah berhasil, ini yang harus dipakai: script
+-- merekam cara ambil yang BENAR dari tanganmu sendiri, lalu memutarnya ulang.
+local learnBox = Instance.new("Frame")
+learnBox.Size = UDim2.new(1, 0, 0, 132)
+learnBox.BackgroundColor3 = T.panel
+learnBox.BorderSizePixel = 0
+learnBox.Parent = pSteal
+corner(learnBox, 9)
+
+local learnScroll = Instance.new("ScrollingFrame")
+learnScroll.Size = UDim2.new(1, -14, 1, -12)
+learnScroll.Position = UDim2.new(0, 8, 0, 6)
+learnScroll.BackgroundTransparency = 1
+learnScroll.BorderSizePixel = 0
+learnScroll.ScrollBarThickness = 3
+learnScroll.ScrollBarImageColor3 = T.line
+learnScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+learnScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+learnScroll.Parent = learnBox
+
+local learnTxt = Instance.new("TextLabel")
+learnTxt.Size = UDim2.new(1, 0, 0, 0)
+learnTxt.AutomaticSize = Enum.AutomaticSize.Y
+learnTxt.BackgroundTransparency = 1
+learnTxt.Text = "belum merekam.\ntekan tombol di bawah, lalu ambil SATU telur pakai tanganmu sendiri."
+learnTxt.Font = Enum.Font.Code
+learnTxt.TextSize = 10
+learnTxt.TextColor3 = T.txt2
+learnTxt.TextXAlignment = Enum.TextXAlignment.Left
+learnTxt.TextYAlignment = Enum.TextYAlignment.Top
+learnTxt.TextWrapped = true
+learnTxt.Parent = learnScroll
+
+action(pSteal, "AJARI: ambil 1 telur manual", function()
+  S.stealOn = false
+  stopGlide()
+  local ok = startLearning()
+  learnTxt.Text = (ok
+    and "MEREKAM. Sekarang ambil SATU telur seperti biasa (jalan ke telur,\ntekan tombol ambil di game).\n\nBegitu telur terbawa, cara ambilnya langsung dipelajari."
+    or  "Executor tidak mendukung hook remote.\nMasih bisa belajar dari prompt/sentuhan: ambil satu telur manual sekarang.")
+end, "gold")
+
+action(pSteal, "Berhenti merekam", function()
+  stopLearning()
+  learnTxt.Text = SPY.summary()
+end)
+
+action(pSteal, "Lihat cara ambil terpelajari", function()
+  learnTxt.Text = SPY.summary()
+  pcall(function() setclipboard(SPY.summary()) end)
+end)
+
+toggle(pSteal, "Tembak remote tebakan", "HANYA kalau belum pernah diajari",
+  function() return S.blindFire end, function(v) S.blindFire = v end)
+
+slider(pSteal, "Jarak mendekat sebelum ambil", 3, 20,
+  function() return S.approachDist end, function(v) S.approachDist = v end,
+  function(v) return v .. " stud" end)
+
 section(pSteal, "kecepatan steal")
 slider(pSteal, "Kecepatan saat steal", 16, 1000,
   function() return S.stealSpeed end, function(v) S.stealSpeed = v end,
@@ -409,4 +469,17 @@ task.spawn(function()
   end
 end)
 
-print("[SAE v4] loaded · remote=" .. #remotes .. " · db=" .. DB_COUNT)
+-- ticker: perbarui panel belajar supaya hasilnya terlihat tanpa menekan apa pun
+task.spawn(function()
+  local last = ""
+  while true do
+    task.wait(1)
+    pcall(function()
+      if activePage ~= "STEAL" then return end
+      local s = SPY.summary()
+      if s ~= last then last = s; learnTxt.Text = s end
+    end)
+  end
+end)
+
+print("[SAE v5] loaded · remote=" .. #remotes .. " · db=" .. DB_COUNT)

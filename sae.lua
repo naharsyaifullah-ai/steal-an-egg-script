@@ -59,6 +59,9 @@ local S = {
   takeUnknown  = true,     -- telur yang tidak dikenal database tetap diambil
   baseGuard    = 60,       -- telur sedekat ini ke base sendiri diabaikan
   grabTries    = 3,        -- berapa kali usaha ambil per telur
+  blindFire    = false,    -- tembak remote hasil TEBAKAN nama (mati by default)
+  approachDist = 6,        -- sedekat apa harus mendekat sebelum mencoba ambil
+  hoverBase    = true,     -- setelah ambil, pulang ke base
 
   -- gerak
   walkMode     = false,    -- false = terbang datar (hop), true = jalan kaki
@@ -881,6 +884,351 @@ local function pickEgg()
 end
 
 
+-- ============ PEREKAM CARA AMBIL (remote spy) ============
+-- Dua versi sebelumnya MENEBAK nama remote ("steal", "pickup", ...) dan gagal.
+-- Menebak bukan jalan keluar. Modul ini MEREKAM apa yang benar-benar terjadi
+-- saat pengguna mengambil telur dengan tangan sendiri:
+--   · setiap RemoteEvent/RemoteFunction yang ditembak klien, beserta argumennya
+--   · ProximityPrompt mana yang benar-benar terpicu
+--   · apakah pengambilan terjadi TANPA remote sama sekali (murni sentuhan)
+-- Lalu hasil rekaman itu diputar ulang apa adanya untuk auto steal.
+
+local SPY = {
+  hooked     = false,
+  recording  = false,
+  log        = {},        -- {t, name, method, args, argdesc, path}
+  prompts    = {},        -- {t, name, path}
+  learned    = nil,       -- {name, method, template, path}
+  learnedFrom= nil,       -- "remote" | "prompt" | "touch"
+  note       = "belum merekam",
+  fires      = 0,
+  lastPickup = nil,
+}
+
+local MAXLOG = 60
+
+-- Deteksi Instance tanpa bergantung pada typeof(): di beberapa lingkungan
+-- typeof tidak ada, dan tebakan lewat type() mengembalikan "table" sehingga
+-- objek telur tidak dikenali di argumen — itu membuat resep salah bentuk.
+local function isInstance(v)
+  if typeof and typeof(v) == "Instance" then return true end
+  if type(v) ~= "table" and type(v) ~= "userdata" then return false end
+  local ok, res = pcall(function()
+    return v.ClassName ~= nil and type(v.IsA) == "function"
+  end)
+  return ok and res == true
+end
+
+local function isDescendantOf(v, root)
+  if not (isInstance(v) and root) then return false end
+  local ok, res = pcall(function() return v:IsDescendantOf(root) end)
+  if ok then return res == true end
+  -- cadangan: jalan naik rantai induk sendiri
+  local ok2, res2 = pcall(function()
+    local p = v.Parent
+    while p do
+      if p == root then return true end
+      p = p.Parent
+    end
+    return false
+  end)
+  return ok2 and res2 == true
+end
+
+local function pathOf(inst)
+  local parts, n = {}, inst
+  local hops = 0
+  while n and hops < 6 do
+    table.insert(parts, 1, n.Name)
+    n = n.Parent
+    hops = hops + 1
+  end
+  return table.concat(parts, ".")
+end
+
+local function describeArg(v)
+  if isInstance(v) then
+    local cn, nm = "?", "?"
+    pcall(function() cn = tostring(v.ClassName); nm = tostring(v.Name) end)
+    return "Instance(" .. cn .. ":" .. nm .. ")"
+  end
+  local t = type(v)
+  if t == "string" then
+    return '"' .. tostring(v):sub(1, 24) .. '"'
+  elseif t == "table" then
+    local keys = {}
+    for k in pairs(v) do
+      keys[#keys + 1] = tostring(k)
+      if #keys >= 4 then break end
+    end
+    return "table{" .. table.concat(keys, ",") .. "}"
+  end
+  return t .. "(" .. tostring(v):sub(1, 20) .. ")"
+end
+
+local function describeArgs(args)
+  local d = {}
+  for i = 2, args.n do d[#d + 1] = describeArg(args[i]) end
+  return table.concat(d, ", ")
+end
+
+-- Ubah argumen rekaman menjadi cetakan (template) yang bisa dipakai ulang.
+-- Argumen yang menunjuk telur diganti placeholder, sisanya dipakai apa adanya.
+local function buildTemplate(args, eggObj)
+  local tpl = {}
+  for i = 2, args.n do
+    local v = args[i]
+    local slot
+    if v == eggObj then
+      slot = { kind = "egg" }
+    elseif isDescendantOf(v, eggObj) then
+      slot = { kind = "egg" }
+    elseif eggObj and type(v) == "string" and v == eggObj.Name then
+      slot = { kind = "eggname" }
+    elseif type(v) == "table" and not isInstance(v) then
+      -- salin dangkal, tukar nilai yang menunjuk telur
+      local copy = {}
+      for k, vv in pairs(v) do
+        if vv == eggObj then copy[k] = "__EGG__"
+        elseif eggObj and type(vv) == "string" and vv == eggObj.Name then copy[k] = "__EGGNAME__"
+        else copy[k] = vv end
+      end
+      slot = { kind = "table", value = copy }
+    else
+      slot = { kind = "literal", value = v }
+    end
+    tpl[#tpl + 1] = slot
+  end
+  return tpl
+end
+
+local function fillTemplate(tpl, eggObj)
+  local out = {}
+  for i, slot in ipairs(tpl) do
+    if slot.kind == "egg" then
+      out[i] = eggObj
+    elseif slot.kind == "eggname" then
+      out[i] = eggObj and eggObj.Name or ""
+    elseif slot.kind == "table" then
+      local copy = {}
+      for k, v in pairs(slot.value) do
+        if v == "__EGG__" then copy[k] = eggObj
+        elseif v == "__EGGNAME__" then copy[k] = eggObj and eggObj.Name or ""
+        else copy[k] = v end
+      end
+      out[i] = copy
+    else
+      out[i] = slot.value
+    end
+  end
+  return out, #tpl
+end
+
+local function describeTemplate(tpl)
+  local d = {}
+  for _, s in ipairs(tpl) do
+    if s.kind == "egg" then d[#d + 1] = "<telur>"
+    elseif s.kind == "eggname" then d[#d + 1] = "<nama telur>"
+    elseif s.kind == "table" then d[#d + 1] = "table"
+    else d[#d + 1] = describeArg(s.value) end
+  end
+  return table.concat(d, ", ")
+end
+
+-- ---------- pemasangan hook ----------
+local function recordFire(remote, method, args)
+  SPY.fires = SPY.fires + 1
+  local entry = {
+    t       = tick(),
+    name    = remote.Name,
+    method  = method,
+    args    = args,
+    argdesc = describeArgs(args),
+    path    = pathOf(remote),
+    remote  = remote,
+  }
+  table.insert(SPY.log, 1, entry)
+  while #SPY.log > MAXLOG do table.remove(SPY.log) end
+  return entry
+end
+
+-- Jalur suntik untuk harness uji. Di Roblox, recordFire dipanggil dari hook
+-- __namecall; harness tidak bisa memasang hook itu, jadi ia memakai pintu ini.
+function SPY.recordForTest(remote, method, args)
+  return recordFire(remote, method, args)
+end
+
+function SPY.install()
+  if SPY.hooked then return true, "sudah terpasang" end
+
+  -- jalur utama: hookmetamethod pada __namecall (didukung Delta/Synapse/dll)
+  local okHook = false
+  pcall(function()
+    if type(hookmetamethod) == "function" and type(getnamecallmethod) == "function" then
+      local old
+      old = hookmetamethod(game, "__namecall", function(self, ...)
+        local m = getnamecallmethod()
+        if (m == "FireServer" or m == "InvokeServer") and SPY.recording then
+          -- table.pack di sini, JANGAN '...' di dalam closure pcall
+          local packed = table.pack(self, ...)
+          pcall(function()
+            if self and self.IsA and (self:IsA("RemoteEvent") or self:IsA("RemoteFunction")) then
+              recordFire(self, m, packed)
+            end
+          end)
+        end
+        return old(self, ...)
+      end)
+      okHook = true
+    end
+  end)
+
+  -- jalur cadangan: ganti metatable mentah
+  if not okHook then
+    pcall(function()
+      local mt = getrawmetatable and getrawmetatable(game)
+      if mt and setreadonly then
+        setreadonly(mt, false)
+        local oldNC = mt.__namecall
+        mt.__namecall = function(self, ...)
+          local m = getnamecallmethod and getnamecallmethod() or ""
+          if (m == "FireServer" or m == "InvokeServer") and SPY.recording then
+            local packed = table.pack(self, ...)
+            pcall(function()
+              if self and self.IsA and (self:IsA("RemoteEvent") or self:IsA("RemoteFunction")) then
+                recordFire(self, m, packed)
+              end
+            end)
+          end
+          return oldNC(self, ...)
+        end
+        setreadonly(mt, true)
+        okHook = true
+      end
+    end)
+  end
+
+  -- hook prompt: catat prompt mana yang benar-benar terpicu
+  pcall(function()
+    for _, p in ipairs(Workspace:GetDescendants()) do
+      if p:IsA("ProximityPrompt") then
+        p.Triggered:Connect(function()
+          if SPY.recording then
+            table.insert(SPY.prompts, 1, { t = tick(), name = p.Parent and p.Parent.Name or "?", path = pathOf(p) })
+            while #SPY.prompts > 20 do table.remove(SPY.prompts) end
+          end
+        end)
+      end
+    end
+  end)
+
+  SPY.hooked = okHook
+  SPY.note = okHook and "hook terpasang" or "executor tidak mendukung hook remote"
+  return okHook, SPY.note
+end
+
+-- ---------- belajar dari rekaman ----------
+-- Dipanggil saat terdeteksi telur BERHASIL terambil oleh pengguna.
+function SPY.learnFrom(eggObj, sinceT)
+  sinceT = sinceT or (tick() - 4)
+
+  -- 1. remote yang argumennya menyebut telur ini -> paling meyakinkan
+  for _, e in ipairs(SPY.log) do
+    if e.t >= sinceT then
+      for i = 2, e.args.n do
+        local v = e.args[i]
+        local hit = (v == eggObj)
+        if not hit and type(v) == "string" and eggObj and v == eggObj.Name then hit = true end
+        if not hit and isDescendantOf(v, eggObj) then hit = true end
+        if hit then
+          SPY.learned = {
+            name = e.name, method = e.method, path = e.path,
+            remote = e.remote,
+            template = buildTemplate(e.args, eggObj),
+          }
+          SPY.learnedFrom = "remote"
+          SPY.note = "belajar: " .. e.name .. "(" .. describeTemplate(SPY.learned.template) .. ")"
+          return true
+        end
+      end
+    end
+  end
+
+  -- 2. remote terakhir sebelum telur terambil, walau argumennya tidak menyebut telur
+  for _, e in ipairs(SPY.log) do
+    if e.t >= sinceT then
+      SPY.learned = {
+        name = e.name, method = e.method, path = e.path,
+        remote = e.remote,
+        template = buildTemplate(e.args, eggObj),
+      }
+      SPY.learnedFrom = "remote"
+      SPY.note = "belajar (tanpa arg telur): " .. e.name
+      return true
+    end
+  end
+
+  -- 3. tidak ada remote: prompt?
+  for _, p in ipairs(SPY.prompts) do
+    if p.t >= sinceT then
+      SPY.learned = nil
+      SPY.learnedFrom = "prompt"
+      SPY.note = "ambil lewat ProximityPrompt di " .. p.name .. " (tanpa remote)"
+      return true
+    end
+  end
+
+  -- 4. benar-benar tanpa apa pun: murni sentuhan / server-side
+  SPY.learned = nil
+  SPY.learnedFrom = "touch"
+  SPY.note = "tidak ada remote & prompt — pengambilan murni sentuhan; yang penting mendekat"
+  return true
+end
+
+-- putar ulang cara yang sudah dipelajari
+function SPY.replay(eggObj)
+  local L = SPY.learned
+  if not L then return false end
+  local ok = false
+  pcall(function()
+    local r = L.remote
+    if not (r and r.Parent) then return end
+    local args, n = fillTemplate(L.template, eggObj)
+    if L.method == "InvokeServer" then
+      r:InvokeServer(table.unpack(args, 1, n))
+    else
+      r:FireServer(table.unpack(args, 1, n))
+    end
+    ok = true
+  end)
+  return ok
+end
+
+function SPY.summary()
+  local lines = {}
+  lines[#lines + 1] = "status : " .. SPY.note
+  lines[#lines + 1] = "hook   : " .. (SPY.hooked and "aktif" or "TIDAK aktif")
+  lines[#lines + 1] = "rekam  : " .. (SPY.recording and "MENYALA" or "mati")
+  lines[#lines + 1] = "tembakan tercatat: " .. SPY.fires
+  if SPY.learned then
+    lines[#lines + 1] = "dipakai: " .. SPY.learned.name
+      .. ":" .. SPY.learned.method
+      .. "(" .. describeTemplate(SPY.learned.template) .. ")"
+  elseif SPY.learnedFrom then
+    lines[#lines + 1] = "dipakai: cara " .. SPY.learnedFrom
+  end
+  if #SPY.log > 0 then
+    lines[#lines + 1] = ""
+    lines[#lines + 1] = "remote terakhir:"
+    for i = 1, math.min(6, #SPY.log) do
+      local e = SPY.log[i]
+      lines[#lines + 1] = "  " .. e.name .. "(" .. e.argdesc:sub(1, 46) .. ")"
+    end
+  end
+  return table.concat(lines, "\n")
+end
+
+
 -- ============ PREDIKSI SIKLUS TELUR ============
 -- Jujur soal batasnya: spawn Secret/Eternal/Divine di Steal An Egg adalah
 -- UNDIAN ACAK tiap reset (±5 menit), bukan jadwal tetap. Jadi "Divine jam 14:32"
@@ -1178,18 +1526,39 @@ local function heldByMe(obj, nearDist)
   return false
 end
 
--- satu percobaan ambil penuh
+-- satu percobaan ambil penuh.
+-- Urutan penting: kalau cara ambil sudah DIPELAJARI dari rekaman nyata, itu
+-- yang dipakai lebih dulu. Tebakan nama remote hanya cadangan terakhir, dan
+-- hanya kalau S.blindFire menyala — menembak remote secara buta bisa memicu
+-- anti-cheat dan itu yang gagal di v3/v4.
 local function grabAttempt(e)
   local acts = 0
+
+  -- 1. selalu: prompt di dalam telur + sentuh semua part (cara pemain asli)
   acts = acts + promptsInside(e.obj, 26)
   acts = acts + pressPromptsNear(30)
   acts = acts + touchAllParts(e.obj)
-  -- remote dengan beberapa bentuk argumen: game bisa minta objek, nama, atau
-  -- tanpa argumen sama sekali
-  local words = { "steal", "pickup", "pick", "grab", "take", "collect", "carry", "hold" }
-  fireMatch(words, e.obj)
-  fireMatch(words, e.obj.Name)
-  fireMatch(words)
+
+  -- 2. resep hasil belajar
+  if SPY and SPY.learned then
+    if SPY.replay(e.obj) then acts = acts + 1 end
+    return acts
+  end
+
+  -- 3. kalau yang dipelajari adalah "prompt saja" atau "sentuhan saja",
+  --    jangan menembak remote apa pun
+  if SPY and (SPY.learnedFrom == "prompt" or SPY.learnedFrom == "touch") then
+    return acts
+  end
+
+  -- 4. cadangan tebakan (bisa dimatikan)
+  if S.blindFire then
+    local words = { "steal", "pickup", "pick", "grab", "take", "collect", "carry", "hold" }
+    fireMatch(words, e.obj)
+    fireMatch(words, e.obj.Name)
+    fireMatch(words)
+    acts = acts + 1
+  end
   return acts
 end
 
@@ -1214,13 +1583,16 @@ task.spawn(function()
         moveTo(e.pos, 25, S.stealSpeed)
         if not S.stealOn then S.status = "dibatalkan"; return end
 
-        -- 2. koreksi jarak: kalau masih jauh, dekati lagi sekali
-        local h = hrp()
-        if h and e.obj.Parent then
+        -- 2. koreksi jarak: benar-benar sampai di sisi telur, bukan "kira-kira".
+        -- Jarak yang terlalu jauh adalah penyebab paling umum prompt/sentuhan
+        -- tidak berefek sama sekali.
+        for _ = 1, 3 do
+          local h = hrp()
+          if not (h and e.obj.Parent) then break end
           local now = posOf(e.obj) or e.pos
-          if dist(h.Position, now) > 12 then
-            moveTo(now, 8, S.stealSpeed)
-          end
+          local d = dist(h.Position, now)
+          if d <= S.approachDist then break end
+          moveTo(now, 10, S.stealSpeed)
         end
 
         -- 3. usaha ambil beberapa kali, berhenti begitu terbukti terbawa
@@ -1482,6 +1854,109 @@ task.spawn(function()
         end
       end
     end)
+  end
+end)
+
+
+-- ============ PEMANTAU BELAJAR OTOMATIS ============
+-- Menyalakan rekaman lalu menunggu pengguna mengambil satu telur dengan tangan
+-- sendiri. Begitu ada telur yang benar-benar berpindah ke karakter (atau hilang
+-- saat pengguna berdiri di sisinya), rekaman terakhir dipakai sebagai resep.
+
+local LEARN = {
+  active   = false,
+  started  = nil,
+  watching = {},          -- obj -> {pos, t}
+  done     = false,
+}
+
+local function snapshotNearby()
+  local h = hrp(); if not h then return end
+  LEARN.watching = {}
+  for _, e in ipairs(scanEggs()) do
+    if not e.mine and dist(h.Position, e.pos) < 120 then
+      LEARN.watching[e.obj] = { pos = e.pos, t = tick() }
+    end
+  end
+end
+
+function startLearning()
+  local ok = SPY.install()
+  SPY.recording = true
+  SPY.log = {}
+  SPY.prompts = {}
+  SPY.fires = 0
+  LEARN.active = true
+  LEARN.done = false
+  LEARN.started = tick()
+  snapshotNearby()
+  S.status = ok and "MODE BELAJAR: ambil 1 telur manual"
+    or "hook gagal — masih bisa belajar dari prompt/sentuhan"
+  return ok
+end
+
+function stopLearning()
+  LEARN.active = false
+  SPY.recording = false
+  S.status = "mode belajar berhenti"
+end
+
+-- pantau: apakah salah satu telur yang diawasi kini terbawa pengguna?
+task.spawn(function()
+  while true do
+    task.wait(0.35)
+    if LEARN.active and alive() then
+      pcall(function()
+        local h = hrp(); if not h then return end
+        local c = char()
+
+        for obj, info in pairs(LEARN.watching) do
+          local taken = false
+
+          if not obj.Parent then
+            -- hilang: hanya dihitung kalau pengguna sedang di sisinya
+            if dist(h.Position, info.pos) < 18 then taken = true end
+          else
+            local p = obj.Parent
+            while p do
+              if p == c then taken = true break end
+              p = p.Parent
+            end
+            -- atau telur ikut bergerak bersama pemain (dibawa)
+            if not taken then
+              local np = posOf(obj)
+              if np and (np - info.pos).Magnitude > 12 and dist(h.Position, np) < 14 then
+                taken = true
+              end
+            end
+          end
+
+          if taken then
+            SPY.learnFrom(obj, LEARN.started)
+            SPY.lastPickup = tostring(obj.Name)
+            LEARN.active = false
+            LEARN.done = true
+            SPY.recording = false
+            S.status = "TERPELAJARI: " .. SPY.note:sub(1, 46)
+            return
+          end
+        end
+
+        -- perbarui daftar awasan tiap 3 detik supaya telur baru ikut terpantau
+        if tick() - (LEARN.lastSnap or 0) > 3 then
+          LEARN.lastSnap = tick()
+          local h2 = hrp()
+          if h2 then
+            for _, e in ipairs(scanEggs()) do
+              if not e.mine and not LEARN.watching[e.obj]
+                and dist(h2.Position, e.pos) < 120 then
+                LEARN.watching[e.obj] = { pos = e.pos, t = tick() }
+              end
+            end
+          end
+        end
+      end)
+    end
   end
 end)
 
@@ -2014,6 +2489,66 @@ toggle(pSteal, "Ambil telur tak dikenal", "telur di luar database tetap diambil"
 toggle(pSteal, "Prioritas telur mutasi", "Spirit Bloom 3x > Rainbow 2.5x > Golden 2x",
   function() return S.preferMutasi end, function(v) S.preferMutasi = v end)
 
+section(pSteal, "cara ambil (penting)")
+-- Kalau auto steal tidak pernah berhasil, ini yang harus dipakai: script
+-- merekam cara ambil yang BENAR dari tanganmu sendiri, lalu memutarnya ulang.
+local learnBox = Instance.new("Frame")
+learnBox.Size = UDim2.new(1, 0, 0, 132)
+learnBox.BackgroundColor3 = T.panel
+learnBox.BorderSizePixel = 0
+learnBox.Parent = pSteal
+corner(learnBox, 9)
+
+local learnScroll = Instance.new("ScrollingFrame")
+learnScroll.Size = UDim2.new(1, -14, 1, -12)
+learnScroll.Position = UDim2.new(0, 8, 0, 6)
+learnScroll.BackgroundTransparency = 1
+learnScroll.BorderSizePixel = 0
+learnScroll.ScrollBarThickness = 3
+learnScroll.ScrollBarImageColor3 = T.line
+learnScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+learnScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+learnScroll.Parent = learnBox
+
+local learnTxt = Instance.new("TextLabel")
+learnTxt.Size = UDim2.new(1, 0, 0, 0)
+learnTxt.AutomaticSize = Enum.AutomaticSize.Y
+learnTxt.BackgroundTransparency = 1
+learnTxt.Text = "belum merekam.\ntekan tombol di bawah, lalu ambil SATU telur pakai tanganmu sendiri."
+learnTxt.Font = Enum.Font.Code
+learnTxt.TextSize = 10
+learnTxt.TextColor3 = T.txt2
+learnTxt.TextXAlignment = Enum.TextXAlignment.Left
+learnTxt.TextYAlignment = Enum.TextYAlignment.Top
+learnTxt.TextWrapped = true
+learnTxt.Parent = learnScroll
+
+action(pSteal, "AJARI: ambil 1 telur manual", function()
+  S.stealOn = false
+  stopGlide()
+  local ok = startLearning()
+  learnTxt.Text = (ok
+    and "MEREKAM. Sekarang ambil SATU telur seperti biasa (jalan ke telur,\ntekan tombol ambil di game).\n\nBegitu telur terbawa, cara ambilnya langsung dipelajari."
+    or  "Executor tidak mendukung hook remote.\nMasih bisa belajar dari prompt/sentuhan: ambil satu telur manual sekarang.")
+end, "gold")
+
+action(pSteal, "Berhenti merekam", function()
+  stopLearning()
+  learnTxt.Text = SPY.summary()
+end)
+
+action(pSteal, "Lihat cara ambil terpelajari", function()
+  learnTxt.Text = SPY.summary()
+  pcall(function() setclipboard(SPY.summary()) end)
+end)
+
+toggle(pSteal, "Tembak remote tebakan", "HANYA kalau belum pernah diajari",
+  function() return S.blindFire end, function(v) S.blindFire = v end)
+
+slider(pSteal, "Jarak mendekat sebelum ambil", 3, 20,
+  function() return S.approachDist end, function(v) S.approachDist = v end,
+  function(v) return v .. " stud" end)
+
 section(pSteal, "kecepatan steal")
 slider(pSteal, "Kecepatan saat steal", 16, 1000,
   function() return S.stealSpeed end, function(v) S.stealSpeed = v end,
@@ -2400,7 +2935,20 @@ task.spawn(function()
   end
 end)
 
-print("[SAE v4] loaded · remote=" .. #remotes .. " · db=" .. DB_COUNT)
+-- ticker: perbarui panel belajar supaya hasilnya terlihat tanpa menekan apa pun
+task.spawn(function()
+  local last = ""
+  while true do
+    task.wait(1)
+    pcall(function()
+      if activePage ~= "STEAL" then return end
+      local s = SPY.summary()
+      if s ~= last then last = s; learnTxt.Text = s end
+    end)
+  end
+end)
+
+print("[SAE v5] loaded · remote=" .. #remotes .. " · db=" .. DB_COUNT)
 
 
 -- ============ TAB PREDIKSI ============
@@ -2685,6 +3233,11 @@ do
       grabAttempt  = grabAttempt,
       promptsInside = promptsInside,
       touchAllParts = touchAllParts,
+      -- perekam & pembelajar cara ambil
+      SPY            = SPY,
+      startLearning  = startLearning,
+      stopLearning   = stopLearning,
+      learnTxt       = learnTxt,
       gui          = gui,
       win          = win,
       orb          = orb,

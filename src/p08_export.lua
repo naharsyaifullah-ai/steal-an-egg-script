@@ -47,6 +47,11 @@ do
       grabAttempt  = grabAttempt,
       promptsInside = promptsInside,
       touchAllParts = touchAllParts,
+      -- perekam & pembelajar cara ambil
+      SPY            = SPY,
+      startLearning  = startLearning,
+      stopLearning   = stopLearning,
+      learnTxt       = learnTxt,
       gui          = gui,
       win          = win,
       orb          = orb,

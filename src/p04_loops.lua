@@ -81,18 +81,39 @@ local function heldByMe(obj, nearDist)
   return false
 end
 
--- satu percobaan ambil penuh
+-- satu percobaan ambil penuh.
+-- Urutan penting: kalau cara ambil sudah DIPELAJARI dari rekaman nyata, itu
+-- yang dipakai lebih dulu. Tebakan nama remote hanya cadangan terakhir, dan
+-- hanya kalau S.blindFire menyala — menembak remote secara buta bisa memicu
+-- anti-cheat dan itu yang gagal di v3/v4.
 local function grabAttempt(e)
   local acts = 0
+
+  -- 1. selalu: prompt di dalam telur + sentuh semua part (cara pemain asli)
   acts = acts + promptsInside(e.obj, 26)
   acts = acts + pressPromptsNear(30)
   acts = acts + touchAllParts(e.obj)
-  -- remote dengan beberapa bentuk argumen: game bisa minta objek, nama, atau
-  -- tanpa argumen sama sekali
-  local words = { "steal", "pickup", "pick", "grab", "take", "collect", "carry", "hold" }
-  fireMatch(words, e.obj)
-  fireMatch(words, e.obj.Name)
-  fireMatch(words)
+
+  -- 2. resep hasil belajar
+  if SPY and SPY.learned then
+    if SPY.replay(e.obj) then acts = acts + 1 end
+    return acts
+  end
+
+  -- 3. kalau yang dipelajari adalah "prompt saja" atau "sentuhan saja",
+  --    jangan menembak remote apa pun
+  if SPY and (SPY.learnedFrom == "prompt" or SPY.learnedFrom == "touch") then
+    return acts
+  end
+
+  -- 4. cadangan tebakan (bisa dimatikan)
+  if S.blindFire then
+    local words = { "steal", "pickup", "pick", "grab", "take", "collect", "carry", "hold" }
+    fireMatch(words, e.obj)
+    fireMatch(words, e.obj.Name)
+    fireMatch(words)
+    acts = acts + 1
+  end
   return acts
 end
 
@@ -117,13 +138,16 @@ task.spawn(function()
         moveTo(e.pos, 25, S.stealSpeed)
         if not S.stealOn then S.status = "dibatalkan"; return end
 
-        -- 2. koreksi jarak: kalau masih jauh, dekati lagi sekali
-        local h = hrp()
-        if h and e.obj.Parent then
+        -- 2. koreksi jarak: benar-benar sampai di sisi telur, bukan "kira-kira".
+        -- Jarak yang terlalu jauh adalah penyebab paling umum prompt/sentuhan
+        -- tidak berefek sama sekali.
+        for _ = 1, 3 do
+          local h = hrp()
+          if not (h and e.obj.Parent) then break end
           local now = posOf(e.obj) or e.pos
-          if dist(h.Position, now) > 12 then
-            moveTo(now, 8, S.stealSpeed)
-          end
+          local d = dist(h.Position, now)
+          if d <= S.approachDist then break end
+          moveTo(now, 10, S.stealSpeed)
         end
 
         -- 3. usaha ambil beberapa kali, berhenti begitu terbukti terbawa

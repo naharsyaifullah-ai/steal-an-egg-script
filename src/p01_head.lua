@@ -59,6 +59,9 @@ local S = {
   takeUnknown  = true,     -- telur yang tidak dikenal database tetap diambil
   baseGuard    = 60,       -- telur sedekat ini ke base sendiri diabaikan
   grabTries    = 3,        -- berapa kali usaha ambil per telur
+  blindFire    = false,    -- tembak remote hasil TEBAKAN nama (mati by default)
+  approachDist = 6,        -- sedekat apa harus mendekat sebelum mencoba ambil
+  hoverBase    = true,     -- setelah ambil, pulang ke base
 
   -- gerak
   walkMode     = false,    -- false = terbang datar (hop), true = jalan kaki

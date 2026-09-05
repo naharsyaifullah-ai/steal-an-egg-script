@@ -10,6 +10,21 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/naharsyaifullah-ai/st
 
 Copy satu baris di atas ke executor → Execute.
 
+## Yang diperbaiki di v5
+
+Auto steal tetap gagal di v3 dan v4 karena keduanya **menebak** nama remote (`steal`, `pickup`, `grab`, …). Menebak bukan jalan keluar. v5 berhenti menebak dan **merekam cara ambil yang sebenarnya** dari tanganmu sendiri:
+
+1. Tab STEAL → tekan **AJARI: ambil 1 telur manual**
+2. Ambil satu telur seperti biasa (jalan ke telur, tekan tombol ambil di game)
+3. Begitu telur benar-benar terbawa, script mencatat panggilan mana yang dipakai — nama remote, metode (`FireServer`/`InvokeServer`), dan **posisi argumen** mana yang berisi objek telur
+4. Auto steal memutar ulang panggilan itu apa adanya, dengan telur berbeda disisipkan ke posisi yang benar
+
+Kalau ternyata pengambilan tidak memakai remote sama sekali, script mengenalinya juga: `ProximityPrompt` saja, atau murni sentuhan. Dalam kedua kasus itu ia **tidak** menembak remote apa pun — menembak remote secara buta bisa memicu anti-cheat, dan itu yang gagal sebelumnya.
+
+Toggle **Tembak remote tebakan** sekarang **mati secara default**. Nyalakan hanya kalau belum pernah diajari.
+
+Perubahan lain: script benar-benar mendekat sampai `Jarak mendekat sebelum ambil` (default 6 stud) sebelum mencoba, dengan sampai 3 kali koreksi jarak — jarak terlalu jauh adalah penyebab paling umum prompt dan sentuhan tidak berefek.
+
 ## Yang diperbaiki di v4
 
 **1. Gerak: terbang DATAR, bukan jalan kaki dan bukan naik ke langit.**
@@ -46,6 +61,10 @@ Kalau masih ada yang tak cocok, tab ESP punya tombol **Lihat nama asli telur**: 
 ## Fitur
 
 **Tab STEAL**
+- **AJARI: ambil 1 telur manual** — merekam cara ambil yang benar, lalu diputar ulang. Ini yang membuat auto steal bekerja
+- Tombol `Berhenti merekam` dan `Lihat cara ambil terpelajari` (disalin ke clipboard)
+- Toggle **Tembak remote tebakan** (mati default)
+- Slider **Jarak mendekat sebelum ambil**
 - Auto steal dengan filter rarity 10 tier chip (warna sesuai rarity)
 - Tombol cepat: Semua / Kosong / Top 3 / Cosmic+
 - **Slider kecepatan steal** sendiri (16–1000 stud)
@@ -89,11 +108,15 @@ Spawn Secret / Eternal / Divine adalah **undian acak tiap reset**, bukan jadwal 
 
 Diuji pakai interpreter Luau asli di atas mock environment Roblox (Instance, Vector3, Humanoid dengan `MoveTo`, Attribute, RemoteEvent, ProximityPrompt, fisika terbang & jalan):
 
-- **341 assertion lulus, 0 gagal** (mode test)
+- **389 assertion lulus, 0 gagal** (mode test)
 - **5 assertion lulus** (mode produksi: tanpa flag test tidak ada global bocor, semua toggle OFF → nol remote tertembak)
 
 Yang dibuktikan antara lain:
 
+- perekam menangkap `RF_EggInteract:FireServer("Grab", <telur>)`, membuat cetakan dengan literal `"Grab"` dipertahankan dan slot telur sebagai placeholder, lalu memutarnya ulang untuk telur **berbeda** dengan objek yang benar di posisi argumen yang benar
+- tanpa resep dan dengan `blindFire` mati: **nol** remote ditembak, hanya prompt + sentuhan
+- resep "prompt saja" mencegah tembakan remote **walau** `blindFire` dinyalakan
+- pemantau mendeteksi telur yang benar-benar terambil pengguna, lalu resepnya langsung terpakai untuk telur lain
 - ketinggian karakter tidak bergeser >1 stud selama terbang datar, dan komponen Y kecepatan = 0 (bukti "lurus, tidak ke atas")
 - `PlatformStand` tidak pernah true (bukti tidak ragdoll/jatuh-jatuh)
 - berdiri di sebelah telur **tidak** dihitung berhasil memegang; telur yang hilang saat kita 500 stud jauhnya tidak diklaim sebagai hasil kita
@@ -106,7 +129,7 @@ Yang dibuktikan antara lain:
 Jalankan sendiri:
 
 ```bash
-python3 test/run.py        # mode test  → 341 assertion
+python3 test/run.py        # mode test  → 389 assertion
 python3 test/run_prod.py   # mode produksi → 5 assertion
 ```
 
@@ -117,8 +140,10 @@ src/p01_head.lua          state, tabel rarity, mutasi, warna
 src/p00_db.lua            database 106 pet: rarity + income per detik
 src/p02_scan.lua          deteksi telur/trap/musuh/base + pencocokan nama
 src/p03_move.lua          remote indexer + terbang datar & jalan kaki
+src/p12_spy.lua           perekam cara ambil (hook remote) + putar ulang
 src/p09_predict.lua       mesin prediksi siklus
 src/p04_loops.lua         loop steal (ambil + verifikasi), farm, player, ESP
+src/p13_learn.lua         mode belajar: pantau telur terambil pengguna
 src/p10_predict_loop.lua  loop pengamat + auto kejar
 src/p05_ui_base.lua       tema & jendela
 src/p06_ui_comp.lua       komponen UI (toggle, slider, tab)

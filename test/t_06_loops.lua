@@ -35,8 +35,10 @@ do
   SIM_PICKUP = false
 
   check("counter telur dicuri bertambah", A.S.stolen >= 1, A.S.stolen)
-  check("remote steal ditembak saat loop", rawget(R.steal, "_p")._fired ~= nil,
-    rawget(R.steal, "_p")._fired)
+  -- v5: remote TIDAK ditembak secara buta. Tanpa resep hasil belajar dan dengan
+  -- blindFire mati, script hanya memakai prompt + sentuhan seperti pemain asli.
+  check("TIDAK menembak remote tebakan saat blindFire mati",
+    rawget(R.steal, "_p")._fired == nil, rawget(R.steal, "_p")._fired)
   check("remote deposit ditembak (bawa pulang)", rawget(R.deposit, "_p")._fired ~= nil,
     rawget(R.deposit, "_p")._fired)
   check("status terakhir mencatat rarity", tostring(A.S.lastEgg):find("Divine") ~= nil,
