@@ -251,8 +251,10 @@ do
 
   check("auto kejar menembak remote steal", rawget(R.steal, "_p")._fired ~= nil,
     rawget(R.steal, "_p")._fired)
-  check("karakter bergerak menuju telur langka",
-    math.abs(hrp.Position.X) > 40, hrp.Position.X)
+  -- telur Divine di sekitar x=400; toleransi longgar karena auto-kejar bisa
+  -- sudah menyelesaikan perjalanan pulang saat scheduler berhenti
+  check("karakter bergerak dari titik awal", math.abs(hrp.Position.X) > 5,
+    hrp.Position.X)
   check("status menyebut 'kejar' atau selesai",
     tostring(A.S.status):find("kejar") ~= nil or tostring(A.S.status):find("selesai") ~= nil,
     A.S.status)

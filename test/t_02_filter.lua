@@ -27,9 +27,14 @@ do
   check("filter Secret → StagEgg", e4 and e4.obj.Name == "StagEgg", e4 and e4.obj.Name)
 
   only("Mythic")
+  -- takeUnknown harus dimatikan: kalau menyala, telur tanpa rarity (MysteryEgg)
+  -- memang boleh diambil, jadi hasilnya bukan nil
+  local savedTU = A.S.takeUnknown
+  A.S.takeUnknown = false
   local e5 = A.pickEgg()
   check("filter Mythic (tak ada di map) → nil, tidak salah ambil", e5 == nil,
     e5 and e5.obj.Name)
+  A.S.takeUnknown = savedTU
 
   only("Rare", "Eternal")
   local e6 = A.pickEgg()

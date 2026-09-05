@@ -1,9 +1,11 @@
--- ============ DATABASE PET & TELUR ============
--- Sumber: index resmi komunitas (Eldorado, 31 Agu 2026) — 80 pet, 10 biome.
--- Ini yang membuat ESP bisa bilang "Cosmic · Leviathan · $220K/s" walaupun
--- game TIDAK menempelkan label rarity apa pun pada telurnya.
--- Kunci = nama pet huruf kecil tanpa spasi, supaya cocok dengan nama objek
--- seperti "LeviathanEgg", "Leviathan_Egg", "Egg_Leviathan".
+-- ============ DATABASE PET & TELUR (106 pet) ============
+-- Sumber, diambil 5 Sep 2026 lewat you.com:
+--   · Eldorado "all pets index"  -> 80 pet, 10 biome
+--   · Joytify + Timesaver.gg     -> Titan Temple (Update 2, 29-30 Agu 2026)
+--   · IGN All_Pets               -> Monster Egg 12 pet (income belum diindeks)
+-- Angka income = NILAI DASAR pet. Di game, berat/ukuran telur ikut menentukan
+-- money/s akhir, jadi ini patokan, bukan hasil persis.
+-- Kunci = nama pet huruf kecil tanpa spasi/tanda baca.
 
 local DB = {
   -- Forest
@@ -96,22 +98,40 @@ local DB = {
   stag               = { "Secret",    145000000,  "Cherry" },
   onitiger           = { "Eternal",   600000000,  "Cherry" },
   kitsune            = { "Divine",    1800000000, "Cherry" },
-  -- Brainrot (telur Shop terbatas)
+  -- Titan Temple (Update 2 — Monsters Are Coming, 29-30 Agu 2026)
+  crustacia          = { "Legendary", 130000,     "Titan" },
+  spideron           = { "Legendary", 95000,      "Titan" },
+  bladehide          = { "Mythic",    750000,     "Titan" },
+  mantaris           = { "Cosmic",    11000000,   "Titan" },
+  rhinotaur          = { "Cosmic",    17500000,   "Titan" },
+  mutantshark        = { "Secret",    215000000,  "Titan" },
+  gorillaking        = { "Eternal",   880000000,  "Titan" },
+  nightflame         = { "Divine",    nil,        "Titan" },   -- belum diindeks
+  -- Brainrot (telur Shop terbatas) — income tidak dipublikasikan
   tungtungsahur      = { "Rare",      nil,        "Brainrot" },
   bananitadolphinita = { "Epic",      nil,        "Brainrot" },
   belulabeluga       = { "Mythic",    nil,        "Brainrot" },
   mangoliniparrochini = { "Cosmic",   nil,        "Brainrot" },
   bomboclatcrocolat  = { "Secret",    nil,        "Brainrot" },
   strawberryelephant = { "Eternal",   nil,        "Brainrot" },
+  -- Monster Egg (Robux Shop) — IGN mencatat income "Unknown"; dibiarkan nil
+  scorpio            = { "Legendary", nil,        "Monster" },
+  froggo             = { "Mythic",    nil,        "Monster" },
+  crawler            = { "Cosmic",    nil,        "Monster" },
+  crocodon           = { "Secret",    nil,        "Monster" },
+  krakenoid          = { "Eternal",   nil,        "Monster" },
+  dreadscale         = { "Divine",    8000000000, "Monster" },  -- 1 sumber: ~$8B/s
+  mechascorpio       = { "Legendary", nil,        "Monster" },
+  mechafroggo        = { "Mythic",    nil,        "Monster" },
+  mechacrawler       = { "Cosmic",    nil,        "Monster" },
+  mechacrocodon      = { "Secret",    nil,        "Monster" },
+  mechakrakenoid     = { "Eternal",   nil,        "Monster" },
+  mechadreadscale    = { "Divine",    nil,        "Monster" },
 }
 
--- Nama tampilan. Default: kapitalkan huruf pertama kunci ("kitsune" -> "Kitsune").
--- Versi sebelumnya memakai kunci mentah, jadi ESP menulis "leviathan" huruf kecil.
+-- Nama tampilan: default kapitalkan huruf pertama; multi-kata ditulis manual.
 local DISPLAY = {}
-for k in pairs(DB) do
-  DISPLAY[k] = k:sub(1, 1):upper() .. k:sub(2)
-end
--- pet bernama lebih dari satu kata perlu ditulis manual
+for k in pairs(DB) do DISPLAY[k] = k:sub(1, 1):upper() .. k:sub(2) end
 DISPLAY.brrbrrpatapim = "Brr Brr Patapim"
 DISPLAY.trulimerotrulicina = "Trulimero Trulicina"
 DISPLAY.tobtobitobtob = "Tob Tobi Tob Tob"
@@ -142,9 +162,23 @@ DISPLAY.eternallunardragon = "Eternal Lunar Dragon"
 DISPLAY.redpanda = "Red Panda"
 DISPLAY.snowyowl = "Snowy Owl"
 DISPLAY.onitiger = "Oni Tiger"
+DISPLAY.mutantshark = "Mutant Shark"
+DISPLAY.gorillaking = "Gorilla King"
+DISPLAY.tungtungsahur = "Tung Tung Sahur"
+DISPLAY.bananitadolphinita = "Bananita Dolphinita"
+DISPLAY.belulabeluga = "Belula Beluga"
+DISPLAY.mangoliniparrochini = "Mangolini Parrochini"
+DISPLAY.bomboclatcrocolat = "Bomboclat Crocolat"
+DISPLAY.strawberryelephant = "Strawberry Elephant"
+DISPLAY.mechascorpio = "Mecha Scorpio"
+DISPLAY.mechafroggo = "Mecha Froggo"
+DISPLAY.mechacrawler = "Mecha Crawler"
+DISPLAY.mechacrocodon = "Mecha Crocodon"
+DISPLAY.mechakrakenoid = "Mecha Krakenoid"
+DISPLAY.mechadreadscale = "Mecha Dreadscale"
 
--- kunci diurut dari terpanjang: "kingmammoth" harus menang atas "mammoth",
--- "icedragon" atas "dragon", "sandspider" atas "spider"
+-- Kunci diurut dari TERPANJANG. Wajib: "kingmammoth" harus menang atas
+-- "mammoth", "mechadreadscale" atas "dreadscale", "sandspider" atas "spider".
 local DB_KEYS = {}
 for k in pairs(DB) do DB_KEYS[#DB_KEYS + 1] = k end
 table.sort(DB_KEYS, function(a, b) return #a > #b end)
@@ -153,11 +187,11 @@ local function normalize(s)
   return (tostring(s or ""):lower():gsub("[^%a]", ""))
 end
 
--- cocokkan nama objek ke database pet
+-- pencocokan longgar: nama pet terkandung di dalam teks
 local function dbLookup(name)
   local n = normalize(name)
   if n == "" then return nil end
-  n = n:gsub("egg", "")           -- "leviathanegg" -> "leviathan"
+  n = n:gsub("egg", "")
   if DB[n] then return n end
   for _, k in ipairs(DB_KEYS) do
     if #k >= 4 and n:find(k, 1, true) then return k end
@@ -165,16 +199,25 @@ local function dbLookup(name)
   return nil
 end
 
--- versi ketat: hanya cocok kalau nama objek PERSIS nama pet (setelah membuang
--- kata "egg" dan tanda baca). Dipakai untuk memutuskan apakah suatu objek
--- adalah telur, supaya "BearTrap" tidak keliru dianggap telur Bear.
+-- pencocokan ketat: nama objek harus PERSIS nama pet setelah kata "egg" dan
+-- semua tanda baca dibuang. Dipakai untuk memutuskan "ini telur atau bukan",
+-- supaya "BearTrap" tidak dianggap telur Bear.
 local function dbExact(name)
   local n = normalize(name):gsub("egg", "")
   if n ~= "" and DB[n] then return n end
   return nil
 end
 
--- format uang: 1800000000 -> "$1.8B/s"
+-- pencocokan dengan mengabaikan awalan mutasi: "RainbowKitsuneEgg" -> kitsune
+local function dbStripMutation(name)
+  local n = normalize(name):gsub("egg", "")
+  for _, m in ipairs({ "spiritbloom", "rainbow", "golden", "bloom", "silver" }) do
+    n = n:gsub("^" .. m, "")
+  end
+  if n ~= "" and DB[n] then return n end
+  return nil
+end
+
 local function money(v)
   if not v then return "?" end
   local a = math.abs(v)
@@ -184,10 +227,13 @@ local function money(v)
   return string.format("$%d/s", math.floor(v))
 end
 
--- berat kg singkat: 3240000 -> "3.24Mkg"
 local function kg(v)
   if not v or v <= 0 then return nil end
   if v >= 1e6 then return string.format("%.3gMkg", v / 1e6) end
   if v >= 1e3 then return string.format("%.3gKkg", v / 1e3) end
   return string.format("%dkg", math.floor(v))
 end
+
+-- jumlah entri, dipakai panel info
+local DB_COUNT = 0
+for _ in pairs(DB) do DB_COUNT = DB_COUNT + 1 end

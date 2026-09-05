@@ -54,8 +54,14 @@ local S = {
   maxRange     = 3000,     -- jarak maksimum telur yang dikejar
   preferMutasi = true,
   returnBase   = true,
-  stealDelay   = 0.35,
-  stealSpeed   = 120,      -- kecepatan khusus saat steal (stud/detik)
+  stealDelay   = 0.25,
+  stealSpeed   = 180,      -- kecepatan khusus saat steal (stud/detik)
+  takeUnknown  = true,     -- telur yang tidak dikenal database tetap diambil
+  baseGuard    = 60,       -- telur sedekat ini ke base sendiri diabaikan
+  grabTries    = 3,        -- berapa kali usaha ambil per telur
+
+  -- gerak
+  walkMode     = false,    -- false = terbang datar (hop), true = jalan kaki
 
   -- farm
   autoHatch    = false,
@@ -66,11 +72,11 @@ local S = {
 
   -- player
   speedOn      = false,
-  speed        = 60,       -- kecepatan jalan biasa
+  speed        = 120,      -- kecepatan gerak umum
   antiTrap     = false,
   antiBat      = false,
-  antiStun     = false,
-  noFall       = false,
+  antiStun     = true,     -- default ON: mencegah ragdoll saat steal
+  noFall       = true,
   avoidRadius  = 26,
 
   -- esp
@@ -78,13 +84,16 @@ local S = {
   espPlayer    = false,
   espTrap      = false,
   espGuard     = false,
-  espMinRarity = 1,        -- indeks RARITY minimum yang ditampilkan
+  espMinRarity = 1,
   espRange     = 3000,
+  espUnknown   = true,     -- tampilkan juga telur yang belum dikenal
 
   -- runtime
   status       = "idle",
   stolen       = 0,
+  fails        = 0,
   lastEgg      = "-",
+  lastGrab     = "-",
 }
 
 for _, r in ipairs(RARITY) do S.rarityPick[r] = false end

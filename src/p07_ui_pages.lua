@@ -10,12 +10,15 @@ local pPlayer = makePage("PLAYER")
 local pEsp    = makePage("ESP")
 
 -- --- STEAL ---
-toggle(pSteal, "Auto Steal Egg", "jalan di tanah, tidak terbang",
+toggle(pSteal, "Auto Steal Egg", "terbang datar, ambil, baru pulang",
   function() return S.stealOn end,
   function(v) S.stealOn = v; if not v then stopGlide() end end)
 
-toggle(pSteal, "Bawa pulang ke base", "otomatis setor telur",
+toggle(pSteal, "Bawa pulang ke base", "matikan kalau mau kumpul dulu",
   function() return S.returnBase end, function(v) S.returnBase = v end)
+
+toggle(pSteal, "Ambil telur tak dikenal", "telur di luar database tetap diambil",
+  function() return S.takeUnknown end, function(v) S.takeUnknown = v end)
 
 toggle(pSteal, "Prioritas telur mutasi", "Spirit Bloom 3x > Rainbow 2.5x > Golden 2x",
   function() return S.preferMutasi end, function(v) S.preferMutasi = v end)
@@ -31,6 +34,12 @@ slider(pSteal, "Jeda antar steal", 0, 30,
 slider(pSteal, "Jarak maksimum telur", 100, 5000,
   function() return S.maxRange end, function(v) S.maxRange = v end,
   function(v) return v .. " stud" end)
+slider(pSteal, "Usaha ambil per telur", 1, 8,
+  function() return S.grabTries end, function(v) S.grabTries = v end,
+  function(v) return v .. "x" end)
+slider(pSteal, "Radius abaikan base", 0, 200,
+  function() return S.baseGuard end, function(v) S.baseGuard = v end,
+  function(v) return v <= 0 and "mati" or (v .. " stud") end)
 
 section(pSteal, "pilih rarity")
 
@@ -147,9 +156,12 @@ action(pFarm, "Tekan prompt terdekat", function() pressPromptsNear(30) end)
 
 -- --- PLAYER ---
 section(pPlayer, "gerak")
-toggle(pPlayer, "Speed custom", "kecepatan jalan biasa",
+toggle(pPlayer, "Mode jalan kaki", "matikan = terbang datar (lebih cepat)",
+  function() return S.walkMode end,
+  function(v) S.walkMode = v; stopGlide() end)
+toggle(pPlayer, "Speed custom", "kecepatan gerak umum",
   function() return S.speedOn end, function(v) S.speedOn = v end)
-slider(pPlayer, "Kecepatan jalan", 16, 1000,
+slider(pPlayer, "Kecepatan", 16, 1000,
   function() return S.speed end, function(v) S.speed = v end,
   function(v) return v .. " stud" end)
 
@@ -202,6 +214,8 @@ toggle(pEsp, "ESP Pemain", "nama + jarak pemain lain",
   function() return S.espPlayer end, function(v) S.espPlayer = v end)
 
 section(pEsp, "saringan tampilan")
+toggle(pEsp, "Tampilkan telur tak dikenal", "pet di luar database tetap ditandai",
+  function() return S.espUnknown end, function(v) S.espUnknown = v end)
 slider(pEsp, "Rarity minimum", 1, 10,
   function() return S.espMinRarity end, function(v) S.espMinRarity = v end,
   function(v) return RARITY[math.clamp(v, 1, 10)] or "?" end)
@@ -241,7 +255,8 @@ task.spawn(function()
     task.wait(1)
     pcall(function()
       dot.BackgroundColor3 = S.stealOn and T.jade or T.txt2
-      statusTxt.Text = string.format("%s · dicuri: %d · %s", S.status, S.stolen, S.lastEgg)
+      statusTxt.Text = string.format("%s · ok:%d gagal:%d · %s",
+        S.status, S.stolen, S.fails, S.lastGrab)
     end)
   end
 end)
@@ -252,10 +267,11 @@ task.spawn(function()
     pcall(function()
       if activePage ~= "ESP" then return end
       local eggs = scanEggs()
-      local byR, known, best = {}, 0, nil
+      local byR, known, best, mine = {}, 0, nil, 0
       for _, e in ipairs(eggs) do
         local k = e.rar or "?"
         byR[k] = (byR[k] or 0) + 1
+        if e.mine then mine = mine + 1 end
         if e.income then
           known = known + 1
           local val = e.income * (e.mult or 1)
@@ -271,19 +287,19 @@ task.spawn(function()
       local bestLine = "-"
       if best then
         bestLine = (best.mut and (best.mut .. " ") or "") .. (best.pet or "?")
-          .. " " .. money(best.income * (best.mult or 1))
+          .. " " .. (money(best.income * (best.mult or 1)) or "?")
       end
 
       infoTxt.Text = table.concat({
-        "telur     : " .. #eggs .. "  (dikenali: " .. known .. ")",
+        "telur     : " .. #eggs .. "  (income diketahui: " .. known .. ")",
+        "milikku   : " .. mine .. "  (diabaikan saat steal)",
         "rincian   : " .. (#parts > 0 and table.concat(parts, " ") or "-"),
         "termahal  : " .. bestLine,
-        "trap      : " .. #scanTraps(),
-        "musuh     : " .. #scanHostiles(),
-        "remote    : " .. #remotes,
+        "trap/musuh: " .. #scanTraps() .. " / " .. #scanHostiles(),
+        "remote    : " .. #remotes .. "  · database: " .. DB_COUNT .. " pet",
       }, "\n")
     end)
   end
 end)
 
-print("[SAE v3] loaded · remote=" .. #remotes)
+print("[SAE v4] loaded · remote=" .. #remotes .. " · db=" .. DB_COUNT)

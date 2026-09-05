@@ -53,8 +53,40 @@ workspace = Workspace
 
 -- executor globals
 PROMPT_FIRED, TOUCH_FIRED = 0, 0
-function fireproximityprompt(p) PROMPT_FIRED = PROMPT_FIRED + 1; rawget(p, "_p")._fired = true end
-function firetouchinterest(a, b, s) TOUCH_FIRED = TOUCH_FIRED + 1 end
+-- SIM_PICKUP: when true, firing a prompt / touching a part that belongs to an
+-- egg model reparents that egg onto the character — i.e. the mock behaves like a
+-- server that actually grants the pickup. Without this the steal loop can never
+-- be verified end to end, because v4 only counts a steal after it confirms the
+-- egg is really held.
+SIM_PICKUP = false
+
+local function eggAncestor(inst)
+  local n = inst
+  while n and n ~= MOCK_WS_SENTINEL do
+    local nm = tostring(rawget(n, "_p") and rawget(n, "_p").Name or "")
+    if nm:lower():find("egg") then return n end
+    n = rawget(n, "_p") and rawget(n, "_p").Parent
+  end
+  return nil
+end
+
+function SIM_GRANT(inst)
+  if not SIM_PICKUP then return end
+  local egg = eggAncestor(inst)
+  if not egg then return end
+  local chr = rawget(MOCK.LocalPlayer, "_p").Character
+  if chr then egg.Parent = chr end
+end
+
+function fireproximityprompt(p)
+  PROMPT_FIRED = PROMPT_FIRED + 1
+  rawget(p, "_p")._fired = true
+  SIM_GRANT(p)
+end
+function firetouchinterest(a, b, s)
+  TOUCH_FIRED = TOUCH_FIRED + 1
+  if s == 1 then SIM_GRANT(b) end
+end
 
 -- ---------- fake scheduler: run task.spawn bodies on demand ----------
 local SPAWNED = {}

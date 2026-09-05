@@ -1,3 +1,101 @@
+-- ============ AMBIL TELUR: banyak cara, dicoba berurutan ============
+-- Penyebab "steal ga ke-steal": v3 hanya menembak prompt + touch sekali lalu
+-- langsung pergi. Sekarang: dekati sampai benar-benar dekat, tekan prompt di
+-- dalam objek telur itu sendiri, sentuh SEMUA part-nya, tembak remote dengan
+-- beberapa bentuk argumen, lalu VERIFIKASI apakah telur benar-benar terbawa.
+
+local function promptsInside(obj, radius)
+  local h = hrp(); if not h then return 0 end
+  local n = 0
+  for _, p in ipairs(obj:GetDescendants()) do
+    if p:IsA("ProximityPrompt") then
+      pcall(function()
+        p.Enabled = true
+        p.MaxActivationDistance = math.max(p.MaxActivationDistance or 0, 80)
+        p.RequiresLineOfSight = false
+        p.HoldDuration = 0
+        fireproximityprompt(p)
+      end)
+      n = n + 1
+    end
+  end
+  if obj:IsA("ProximityPrompt") then
+    pcall(function() fireproximityprompt(obj) end)
+    n = n + 1
+  end
+  return n
+end
+
+local function touchAllParts(obj)
+  local h = hrp(); if not h then return 0 end
+  local n = 0
+  local parts = {}
+  if obj:IsA("BasePart") then parts[1] = obj end
+  for _, d in ipairs(obj:GetDescendants()) do
+    if d:IsA("BasePart") then parts[#parts + 1] = d end
+  end
+  for _, p in ipairs(parts) do
+    pcall(function()
+      firetouchinterest(h, p, 0)
+      firetouchinterest(h, p, 1)
+      firetouchinterest(h, p, 0)
+      firetouchinterest(h, p, 1)
+      n = n + 1
+    end)
+  end
+  return n
+end
+
+-- Apakah telur BENAR-BENAR terbawa? Kedekatan posisi BUKAN bukti — berdiri di
+-- sebelah telur tidak berarti memegangnya, dan itulah yang membuat v3 mengaku
+-- berhasil lalu pulang dengan tangan kosong. Bukti yang diterima hanya:
+--   a) telur menjadi keturunan karakter kita, atau
+--   b) telur di-weld ke HumanoidRootPart kita, atau
+--   c) telur hilang dari dunia SAAT kita berdiri di sisinya (<16 stud)
+-- `nearDist` = jarak kita ke telur pada percobaan terakhir.
+local function heldByMe(obj, nearDist)
+  local c = char(); if not c then return false end
+  local h = hrp()
+
+  if not obj.Parent then
+    return (nearDist ~= nil) and (nearDist < 16)
+  end
+
+  local p = obj.Parent
+  while p do
+    if p == c then return true end
+    p = p.Parent
+  end
+
+  if h then
+    for _, d in ipairs(obj:GetDescendants()) do
+      if d:IsA("WeldConstraint") or d:IsA("Weld") then
+        local ok = false
+        pcall(function()
+          if d.Part0 == h or d.Part1 == h then ok = true end
+        end)
+        if ok then return true end
+      end
+    end
+  end
+  return false
+end
+
+-- satu percobaan ambil penuh
+local function grabAttempt(e)
+  local acts = 0
+  acts = acts + promptsInside(e.obj, 26)
+  acts = acts + pressPromptsNear(30)
+  acts = acts + touchAllParts(e.obj)
+  -- remote dengan beberapa bentuk argumen: game bisa minta objek, nama, atau
+  -- tanpa argumen sama sekali
+  local words = { "steal", "pickup", "pick", "grab", "take", "collect", "carry", "hold" }
+  fireMatch(words, e.obj)
+  fireMatch(words, e.obj.Name)
+  fireMatch(words)
+  return acts
+end
+
 -- ============ LOOP: STEAL EGG ============
 task.spawn(function()
   while true do
@@ -14,35 +112,77 @@ task.spawn(function()
         if e.pet then tag = tag .. " " .. e.pet end
         if e.mut then tag = e.mut .. " " .. tag end
 
-        S.status = "jalan ke " .. tag
-        -- kecepatan steal punya slider sendiri
-        walkTo(e.pos, 25, S.stealSpeed)
+        -- 1. dekati sampai benar-benar dekat, bukan cuma "kira-kira sampai"
+        S.status = "menuju " .. tag
+        moveTo(e.pos, 25, S.stealSpeed)
         if not S.stealOn then S.status = "dibatalkan"; return end
 
-        -- ambil: prompt + touch + remote
-        pressPromptsNear(26)
-        local p = partOf(e.obj)
-        if p then touchPart(p) end
-        fireMatch({ "steal", "pickup", "grabegg", "takeegg", "collectegg" }, e.obj)
-        task.wait(0.4)
-        if not S.stealOn then S.status = "dibatalkan"; return end
+        -- 2. koreksi jarak: kalau masih jauh, dekati lagi sekali
+        local h = hrp()
+        if h and e.obj.Parent then
+          local now = posOf(e.obj) or e.pos
+          if dist(h.Position, now) > 12 then
+            moveTo(now, 8, S.stealSpeed)
+          end
+        end
 
+        -- 3. usaha ambil beberapa kali, berhenti begitu terbukti terbawa
+        local got = false
+        for i = 1, math.max(1, S.grabTries) do
+          if not S.stealOn then S.status = "dibatalkan"; return end
+
+          local hh = hrp()
+          local ep = posOf(e.obj)
+          local dNow = (hh and ep) and dist(hh.Position, ep) or nil
+
+          -- kalau telur sudah hilang sebelum kita sempat menyentuh, itu bukan
+          -- keberhasilan kita — kecuali kita memang sedang berdiri di sisinya
+          if not e.obj.Parent then
+            got = heldByMe(e.obj, dNow)
+            break
+          end
+
+          grabAttempt(e)
+          task.wait(0.35)
+
+          local hh2 = hrp()
+          local ep2 = posOf(e.obj)
+          local d2 = (hh2 and ep2) and dist(hh2.Position, ep2) or dNow
+          if heldByMe(e.obj, d2) then got = true break end
+
+          local cur = posOf(e.obj)
+          if cur then moveTo(cur, 4, S.stealSpeed) end
+        end
+
+        S.lastGrab = got and ("berhasil: " .. tag) or ("gagal ambil: " .. tag)
+        if not got then
+          S.fails = S.fails + 1
+          S.status = "gagal ambil, cari yang lain"
+          return                      -- JANGAN pulang kalau tangan kosong
+        end
+
+        -- 4. baru pulang setelah telur benar-benar terbawa
         if S.returnBase then
           local b = myBase()
           if b then
             S.status = "bawa pulang " .. tag
-            walkTo(b, 35, S.stealSpeed)
+            moveTo(b, 35, S.stealSpeed)
             if not S.stealOn then S.status = "dibatalkan"; return end
-            pressPromptsNear(26)
-            fireMatch({ "deposit", "deliver", "placeegg", "storeegg", "submit" }, e.obj)
+            pressPromptsNear(30)
+            fireMatch({ "deposit", "deliver", "place", "store", "submit", "drop" }, e.obj)
+            fireMatch({ "deposit", "deliver", "place", "store", "submit", "drop" })
+            task.wait(0.3)
           end
         end
 
         S.stolen = S.stolen + 1
-        S.lastEgg = tag .. (e.income and (" · " .. money(e.income * (e.mult or 1))) or "")
+        S.lastEgg = tag .. (e.income and (" · " .. (money(e.income * (e.mult or 1)) or "?")) or "")
         S.status = "selesai #" .. S.stolen
       end)
-      if not ok then S.status = "error: " .. tostring(err):sub(1, 40) end
+      if not ok then
+        S.fails = S.fails + 1
+        S.status = "error: " .. tostring(err):sub(1, 44)
+      end
     end
   end
 end)
@@ -63,7 +203,6 @@ task.spawn(function()
   end
 end)
 
--- treadmill: kalau tak ada remote train, jalan ke treadmill (bukan teleport)
 task.spawn(function()
   while true do
     task.wait(6)
@@ -72,10 +211,8 @@ task.spawn(function()
         for _, v in ipairs(Workspace:GetDescendants()) do
           if (v:IsA("BasePart") or v:IsA("Model")) and lower(v.Name):find("treadmill") then
             local p = posOf(v)
-            if p and hrp() and dist(hrp().Position, p) > 12 then
-              walkTo(p, 20)
-            end
-            pressPromptsNear(20)
+            if p and hrp() and dist(hrp().Position, p) > 12 then moveTo(p, 20) end
+            pressPromptsNear(24)
             break
           end
         end
@@ -92,7 +229,7 @@ task.spawn(function()
       local h = hum()
       if not h then return end
 
-      -- jangan ganggu WalkSpeed saat walkTo sedang mengatur kecepatan steal
+      -- jangan ganggu WalkSpeed saat gerak sedang mengatur kecepatan
       if not moving then
         if S.speedOn then
           h.WalkSpeed = math.clamp(S.speed, 8, 1000)
@@ -101,8 +238,7 @@ task.spawn(function()
         end
       end
 
-      -- PlatformStand tidak boleh pernah nyangkut true: itu yang bikin
-      -- karakter tampak jatuh-jatuh setelah bergerak
+      -- PlatformStand tidak boleh pernah nyangkut true
       if h.PlatformStand and not moving then h.PlatformStand = false end
 
       if S.antiStun then
@@ -141,14 +277,12 @@ local function tagBox(inst, color, lines)
     if p then
       local bb = Instance.new("BillboardGui")
       bb.Adornee = p
-      bb.Size = UDim2.new(0, 190, 0, 16 * #lines + 6)
+      bb.Size = UDim2.new(0, 200, 0, 16 * #lines + 6)
       bb.StudsOffset = Vector3.new(0, 2.8, 0)
       bb.AlwaysOnTop = true
       bb.Parent = espF
-
       local ll = Instance.new("UIListLayout")
       ll.Parent = bb
-
       for i, ln in ipairs(lines) do
         local tl = Instance.new("TextLabel")
         tl.Size = UDim2.new(1, 0, 0, 16)
@@ -172,7 +306,6 @@ task.spawn(function()
       local h = hrp(); if not h then return end
 
       if S.espEgg then
-        local minIdx = S.espMinRarity
         for _, e in ipairs(scanEggs()) do
           local d = dist(h.Position, e.pos)
           if d <= S.espRange then
@@ -180,26 +313,36 @@ task.spawn(function()
             if e.rar then
               for i, r in ipairs(RARITY) do if r == e.rar then idx = i break end end
             end
-            -- telur tanpa rarity tetap ditampilkan kalau ambang di posisi 1
-            if idx >= minIdx or (idx == 0 and minIdx <= 1) then
+            local show
+            if idx == 0 then show = S.espUnknown else show = (idx >= S.espMinRarity) end
+            if show then
               local col = (e.rar and RCOLOR[e.rar]) or Color3.fromRGB(190, 195, 205)
 
-              -- baris 1: rarity + nama pet
-              local head = e.rar or "Egg"
-              if e.pet then head = head .. " · " .. e.pet end
+              -- baris 1: mutasi + rarity + nama pet
+              local head
+              if e.pet then
+                head = (e.rar or "?") .. " · " .. e.pet
+              elseif e.rar then
+                head = e.rar
+              else
+                -- pakai nama objek apa adanya, jangan menulis "belum diketahui"
+                head = tostring(e.obj.Name):gsub("_", " ")
+              end
               if e.mut then head = e.mut .. " " .. head end
 
-              -- baris 2: income (dengan pengali mutasi kalau ada)
+              -- baris 2: income
               local l2
               if e.income then
                 local base = money(e.income)
                 if e.mut and (e.mult or 1) > 1 then
-                  l2 = money(e.income * e.mult) .. "  (" .. base .. " ×" .. e.mult .. ")"
+                  l2 = (money(e.income * e.mult) or "?") .. "  (" .. base .. " ×" .. e.mult .. ")"
                 else
                   l2 = base
                 end
+              elseif e.rar then
+                l2 = e.rar .. " · income tak dipublikasikan"
               else
-                l2 = "income belum diketahui"
+                l2 = "pet belum ada di database"
               end
 
               -- baris 3: biome, berat, jarak
@@ -208,6 +351,7 @@ task.spawn(function()
               local w = kg(e.wt)
               if w then bits[#bits + 1] = w end
               bits[#bits + 1] = math.floor(d) .. "m"
+              if e.mine then bits[#bits + 1] = "MILIKKU" end
 
               tagBox(e.obj, col, { head, l2, table.concat(bits, " · ") })
             end
@@ -225,8 +369,7 @@ task.spawn(function()
         for _, m in ipairs(scanHostiles()) do
           local d = dist(h.Position, m.pos)
           if d < 1200 then
-            tagBox(m.obj, Color3.fromRGB(255, 160, 60),
-              { string.upper(m.kind), math.floor(d) .. "m" })
+            tagBox(m.obj, Color3.fromRGB(255, 160, 60), { string.upper(m.kind), math.floor(d) .. "m" })
           end
         end
       end

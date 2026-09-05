@@ -37,27 +37,24 @@ local function textBlob(inst)
 end
 
 -- Rarity: DATABASE PET DULU, label teks cuma cadangan.
--- Versi lama hanya mencari kata rarity di teks. Game tidak menempelkan label
--- itu, jadi hampir semua telur jadi nil dan filter menolak semuanya —
--- inilah sebabnya "cuma Uncommon yang kena": satu-satunya telur yang teksnya
--- kebetulan memuat kata rarity. Sekarang nama pet dipetakan ke rarity resmi.
+-- Game tidak menempelkan kata "Cosmic"/"Divine" pada telur, jadi versi lama
+-- yang hanya membaca teks membuat hampir semua telur nil dan filter menolak
+-- semuanya. Urutan pencocokan: nama persis -> nama tanpa awalan mutasi ->
+-- nama longgar -> teks di dalam objek -> kata rarity eksplisit.
 local function rarityOf(inst)
-  local key = dbLookup(inst.Name)
+  local key = dbExact(inst.Name) or dbStripMutation(inst.Name) or dbLookup(inst.Name)
   if key then return DB[key][1], key end
 
-  -- cadangan: cari nama pet di seluruh teks objek
   local blob = textBlob(inst)
   local k2 = dbLookup(blob)
   if k2 then return DB[k2][1], k2 end
 
   -- cadangan terakhir: kata rarity eksplisit di teks.
-  -- "Uncommon" wajib diuji sebelum "Common" (substring!), jadi urut dari
-  -- yang terpanjang, bukan dari indeks tabel.
+  -- "Uncommon" wajib diuji sebelum "Common" (substring!), jadi urut manual.
   local lb = lower(blob)
   local order = { "Divine", "Eternal", "Secret", "Cosmic", "Mythic",
                   "Legendary", "Uncommon", "Common", "Epic", "Rare" }
   for _, r in ipairs(order) do
-    -- batas kata supaya "Rare" tidak ikut kena dari "Rarest"/"Uncommon"
     local pat = "%f[%a]" .. lower(r) .. "%f[%A]"
     if lb:find(pat) then return r, nil end
   end
@@ -66,7 +63,8 @@ end
 
 -- income per detik dari database (nil kalau pet tidak dikenal)
 local function incomeOf(inst, key)
-  key = key or dbLookup(inst.Name) or dbLookup(textBlob(inst))
+  key = key or dbExact(inst.Name) or dbStripMutation(inst.Name)
+    or dbLookup(inst.Name) or dbLookup(textBlob(inst))
   if key and DB[key] then return DB[key][2], DISPLAY[key] or key, DB[key][3] end
   return nil, nil, nil
 end
@@ -108,15 +106,40 @@ local function isEggName(n)
 end
 
 -- ============ SCAN OBJEK ============
+-- myBase() harus didefinisikan SEBELUM scanEggs() karena scanEggs memakainya;
+-- kalau ditaruh di bawah, Lua membacanya sebagai global nil dan scan meledak.
+local function myBase()
+  for _, v in ipairs(Workspace:GetDescendants()) do
+    local n = lower(v.Name)
+    if (v:IsA("BasePart") or v:IsA("Model")) and (n:find("base") or n:find("plot") or n:find("garden")) then
+      for _, key in ipairs({ "Owner", "OwnerName", "Player", "PlayerName" }) do
+        local o = v:FindFirstChild(key)
+        if o and o:IsA("ValueBase") and tostring(o.Value) == LP.Name then
+          return posOf(v) or (v:IsA("Model") and v:GetPivot().Position)
+        end
+      end
+      for _, d in ipairs(v:GetDescendants()) do
+        if d:IsA("TextLabel") and tostring(d.Text):find(LP.Name) then
+          return posOf(v)
+        end
+      end
+    end
+  end
+  local sp = Workspace:FindFirstChildOfClass("SpawnLocation")
+  return sp and sp.Position or nil
+end
+
+-- Telur milik sendiri (sudah di base) ditandai `mine` supaya loop steal tidak
+-- memilihnya lagi — itu penyebab "mundar-mandir di base".
 local function scanEggs()
   local out = {}
   local seen = {}
+  local base = myBase()
   for _, v in ipairs(Workspace:GetDescendants()) do
     if (v:IsA("Model") or v:IsA("BasePart")) and not seen[v] then
       local nameHit = isEggName(v.Name)
-      local dbHit = dbExact(v.Name)     -- ketat: "BearTrap" bukan telur Bear
+      local dbHit = dbExact(v.Name) or dbStripMutation(v.Name)
       if nameHit or dbHit then
-        -- kalau induknya sudah terdaftar, lewati anaknya (hindari duplikat)
         local parentListed = false
         local p = v.Parent
         while p and p ~= Workspace do
@@ -130,6 +153,14 @@ local function scanEggs()
             local rar, key = rarityOf(v)
             local inc, petName, biome = incomeOf(v, key)
             local mut = mutationOf(v)
+            -- apakah telur ini sudah ada di base sendiri / sedang dibawa?
+            local mine = false
+            if base and dist(pos, base) < S.baseGuard then mine = true end
+            local ap = v.Parent
+            while ap and ap ~= Workspace do
+              if ap == LP.Character then mine = true break end
+              ap = ap.Parent
+            end
             out[#out + 1] = {
               obj    = v,
               pos    = pos,
@@ -141,6 +172,7 @@ local function scanEggs()
               mut    = mut,
               mult   = mut and MUT_MULT[mut] or 1,
               wt     = weightOf(v),
+              mine   = mine,
             }
           end
         end
@@ -181,25 +213,4 @@ local function scanHostiles()
     end
   end
   return out
-end
-
-local function myBase()
-  for _, v in ipairs(Workspace:GetDescendants()) do
-    local n = lower(v.Name)
-    if (v:IsA("BasePart") or v:IsA("Model")) and (n:find("base") or n:find("plot") or n:find("garden")) then
-      for _, key in ipairs({ "Owner", "OwnerName", "Player", "PlayerName" }) do
-        local o = v:FindFirstChild(key)
-        if o and o:IsA("ValueBase") and tostring(o.Value) == LP.Name then
-          return posOf(v) or (v:IsA("Model") and v:GetPivot().Position)
-        end
-      end
-      for _, d in ipairs(v:GetDescendants()) do
-        if d:IsA("TextLabel") and tostring(d.Text):find(LP.Name) then
-          return posOf(v)
-        end
-      end
-    end
-  end
-  local sp = Workspace:FindFirstChildOfClass("SpawnLocation")
-  return sp and sp.Position or nil
 end
