@@ -1,8 +1,15 @@
 --[[
-  STEAL AN EGG — Delta Hub v2
+  STEAL AN EGG — Delta Hub v3
   Hermes Agent · 5 Sep 2026
-  Fitur: Steal Egg (filter rarity) | Farm | Player (anti trap/bat, speed 1000)
-  Gerak halus (glide), BUKAN teleport.
+  https://github.com/naharsyaifullah-ai/steal-an-egg-script
+
+  Perbaikan v3 (dari laporan bug):
+   · rarity dibaca dari DATABASE 80 pet, bukan label teks — dulu hampir semua
+     telur tak terbaca sehingga cuma satu rarity yang kena filter
+   · jalan pakai Humanoid:MoveTo, TIDAK terbang, tidak jatuh terhuyung
+   · kecepatan steal punya slider sendiri di tab STEAL
+   · ESP menampilkan rarity + nama pet + income $/s + mutasi + berat + jarak
+
   Resiko: cheat bisa kena ban. Pakai akun cadangan.
 ]]
 
@@ -14,7 +21,7 @@ local TweenService      = game:GetService("TweenService")
 local CoreGui           = game:GetService("CoreGui")
 local LP                = Players.LocalPlayer
 
--- urutan rarity dari paling rendah ke Divine (Steal An Egg, Sep 2026)
+-- urutan rarity dari terendah ke Divine (10 tier resmi)
 local RARITY = {
   "Common", "Uncommon", "Rare", "Epic", "Legendary",
   "Mythic", "Cosmic", "Secret", "Eternal", "Divine",
@@ -33,18 +40,22 @@ local RCOLOR = {
   Divine    = Color3.fromRGB(255, 255, 255),
 }
 
--- kata kunci mutasi (pengali income) — dipakai ESP + prioritas
+-- mutasi diurut dari NAMA TERPANJANG supaya "Spirit Bloom" tidak
+-- keliru terbaca sebagai "Bloom"
 local MUTATION = { "Spirit Bloom", "Rainbow", "Golden", "Bloom", "Silver" }
 
 -- ============ STATE ============
 local S = {
   -- steal
   stealOn      = false,
-  rarityPick   = {},        -- rarity terpilih (set)
-  minWeight    = 0,         -- 0 = abaikan
+  rarityPick   = {},
+  minWeight    = 0,
+  minIncome    = 0,        -- filter income $/s minimum
+  maxRange     = 3000,     -- jarak maksimum telur yang dikejar
   preferMutasi = true,
   returnBase   = true,
   stealDelay   = 0.35,
+  stealSpeed   = 120,      -- kecepatan khusus saat steal (stud/detik)
 
   -- farm
   autoHatch    = false,
@@ -55,8 +66,7 @@ local S = {
 
   -- player
   speedOn      = false,
-  speed        = 200,       -- stud/detik, maks 1000
-  glide        = true,       -- gerak halus, bukan TP
+  speed        = 60,       -- kecepatan jalan biasa
   antiTrap     = false,
   antiBat      = false,
   antiStun     = false,
@@ -68,6 +78,8 @@ local S = {
   espPlayer    = false,
   espTrap      = false,
   espGuard     = false,
+  espMinRarity = 1,        -- indeks RARITY minimum yang ditampilkan
+  espRange     = 3000,
 
   -- runtime
   status       = "idle",
@@ -79,6 +91,201 @@ for _, r in ipairs(RARITY) do S.rarityPick[r] = false end
 S.rarityPick.Secret  = true
 S.rarityPick.Eternal = true
 S.rarityPick.Divine  = true
+
+
+-- ============ DATABASE PET & TELUR ============
+-- Sumber: index resmi komunitas (Eldorado, 31 Agu 2026) — 80 pet, 10 biome.
+-- Ini yang membuat ESP bisa bilang "Cosmic · Leviathan · $220K/s" walaupun
+-- game TIDAK menempelkan label rarity apa pun pada telurnya.
+-- Kunci = nama pet huruf kecil tanpa spasi, supaya cocok dengan nama objek
+-- seperti "LeviathanEgg", "Leviathan_Egg", "Egg_Leviathan".
+
+local DB = {
+  -- Forest
+  chicken            = { "Common",    1,          "Forest" },
+  dog                = { "Common",    2,          "Forest" },
+  bird               = { "Uncommon",  8,          "Forest" },
+  owl                = { "Rare",      35,         "Forest" },
+  raccoon            = { "Rare",      45,         "Forest" },
+  bear               = { "Epic",      240,        "Forest" },
+  fox                = { "Epic",      180,        "Forest" },
+  brrbrrpatapim      = { "Legendary", 1800,       "Forest" },
+  -- Lake
+  frog               = { "Common",    3,          "Lake" },
+  duckling           = { "Common",    4,          "Lake" },
+  catfish            = { "Uncommon",  12,         "Lake" },
+  turtle             = { "Rare",      60,         "Lake" },
+  trulimerotrulicina = { "Epic",      260,        "Lake" },
+  swan               = { "Epic",      320,        "Lake" },
+  axolotl            = { "Legendary", 2800,       "Lake" },
+  leviathan          = { "Cosmic",    220000,     "Lake" },
+  -- Desert
+  jerboa             = { "Common",    6,          "Desert" },
+  fennec             = { "Uncommon",  18,         "Desert" },
+  camel              = { "Rare",      75,         "Desert" },
+  tobtobitobtob      = { "Epic",      325,        "Desert" },
+  snake              = { "Legendary", 3600,       "Desert" },
+  scorpion           = { "Mythic",    18500,      "Desert" },
+  sandspider         = { "Mythic",    16000,      "Desert" },
+  royalsphinx        = { "Cosmic",    280000,     "Desert" },
+  -- Jungle
+  toucan             = { "Rare",      110,        "Jungle" },
+  chimpanzee         = { "Rare",      90,         "Jungle" },
+  crocodile          = { "Epic",      420,        "Jungle" },
+  gorilla            = { "Legendary", 4800,       "Jungle" },
+  orangutiniananassini = { "Legendary", 5500,     "Jungle" },
+  spider             = { "Mythic",    22000,      "Jungle" },
+  tiger              = { "Mythic",    28000,      "Jungle" },
+  kingsnake          = { "Secret",    3500000,    "Jungle" },
+  -- Snow
+  penguin            = { "Rare",      140,        "Snow" },
+  walrus             = { "Epic",      600,        "Snow" },
+  polarbear          = { "Legendary", 7000,       "Snow" },
+  sabertoothtiger    = { "Mythic",    35000,      "Snow" },
+  mammoth            = { "Mythic",    42000,      "Snow" },
+  kingmammoth        = { "Cosmic",    400000,     "Snow" },
+  yeti               = { "Secret",    5000000,    "Snow" },
+  icedragon          = { "Eternal",   65000000,   "Snow" },
+  -- Volcano
+  lavagecko          = { "Rare",      180,        "Volcano" },
+  lavafrog           = { "Epic",      850,        "Volcano" },
+  flamingbull        = { "Legendary", 9500,       "Volcano" },
+  lavaiguana         = { "Legendary", 11000,      "Volcano" },
+  chillinchilli      = { "Mythic",    55000,      "Volcano" },
+  cerberus           = { "Secret",    8000000,    "Volcano" },
+  phoenix            = { "Eternal",   85000000,   "Volcano" },
+  lavadragon         = { "Eternal",   100000000,  "Volcano" },
+  -- Abyss Ocean
+  parrotfish         = { "Rare",      220,        "Abyss" },
+  swordfish          = { "Epic",      1100,       "Abyss" },
+  shark              = { "Legendary", 15000,      "Abyss" },
+  orca               = { "Mythic",    80000,      "Abyss" },
+  whaleshark         = { "Cosmic",    700000,     "Abyss" },
+  belugawhale        = { "Cosmic",    850000,     "Abyss" },
+  kraken             = { "Secret",    15000000,   "Abyss" },
+  elmaja             = { "Eternal",   130000000,  "Abyss" },
+  -- Prehistoric
+  dodo               = { "Rare",      280,        "Prehistoric" },
+  pterodactyl        = { "Legendary", 22000,      "Prehistoric" },
+  ankylosaurus       = { "Mythic",    120000,     "Prehistoric" },
+  triceratops        = { "Cosmic",    1200000,    "Prehistoric" },
+  bronto             = { "Cosmic",    1500000,    "Prehistoric" },
+  tralaledon         = { "Secret",    32000000,   "Prehistoric" },
+  trex               = { "Secret",    25000000,   "Prehistoric" },
+  mosasaurus         = { "Eternal",   180000000,  "Prehistoric" },
+  -- Cosmic
+  centapede          = { "Epic",      1500,       "Cosmic" },
+  cosmicgecko        = { "Legendary", 30000,      "Cosmic" },
+  cosmicgorilla      = { "Mythic",    180000,     "Cosmic" },
+  lavaccasaturnosaturnita = { "Cosmic", 2200000,  "Cosmic" },
+  cosmicdragon       = { "Secret",    60000000,   "Cosmic" },
+  cosmicskeletonboss = { "Secret",    45000000,   "Cosmic" },
+  eternallunardragon = { "Eternal",   250000000,  "Cosmic" },
+  unicorn            = { "Divine",    1000000000, "Cosmic" },
+  -- Cherry Blossom
+  crane              = { "Epic",      4000,       "Cherry" },
+  salamander         = { "Legendary", 74000,      "Cherry" },
+  redpanda           = { "Mythic",    450000,     "Cherry" },
+  koi                = { "Cosmic",    12000000,   "Cherry" },
+  snowyowl           = { "Cosmic",    7500000,    "Cherry" },
+  stag               = { "Secret",    145000000,  "Cherry" },
+  onitiger           = { "Eternal",   600000000,  "Cherry" },
+  kitsune            = { "Divine",    1800000000, "Cherry" },
+  -- Brainrot (telur Shop terbatas)
+  tungtungsahur      = { "Rare",      nil,        "Brainrot" },
+  bananitadolphinita = { "Epic",      nil,        "Brainrot" },
+  belulabeluga       = { "Mythic",    nil,        "Brainrot" },
+  mangoliniparrochini = { "Cosmic",   nil,        "Brainrot" },
+  bomboclatcrocolat  = { "Secret",    nil,        "Brainrot" },
+  strawberryelephant = { "Eternal",   nil,        "Brainrot" },
+}
+
+-- Nama tampilan. Default: kapitalkan huruf pertama kunci ("kitsune" -> "Kitsune").
+-- Versi sebelumnya memakai kunci mentah, jadi ESP menulis "leviathan" huruf kecil.
+local DISPLAY = {}
+for k in pairs(DB) do
+  DISPLAY[k] = k:sub(1, 1):upper() .. k:sub(2)
+end
+-- pet bernama lebih dari satu kata perlu ditulis manual
+DISPLAY.brrbrrpatapim = "Brr Brr Patapim"
+DISPLAY.trulimerotrulicina = "Trulimero Trulicina"
+DISPLAY.tobtobitobtob = "Tob Tobi Tob Tob"
+DISPLAY.orangutiniananassini = "Orangutini Ananassini"
+DISPLAY.sandspider = "Sand Spider"
+DISPLAY.royalsphinx = "Royal Sphinx"
+DISPLAY.kingsnake = "King Snake"
+DISPLAY.polarbear = "Polar Bear"
+DISPLAY.sabertoothtiger = "Sabertooth Tiger"
+DISPLAY.kingmammoth = "King Mammoth"
+DISPLAY.icedragon = "Ice Dragon"
+DISPLAY.lavagecko = "Lava Gecko"
+DISPLAY.lavafrog = "Lava Frog"
+DISPLAY.flamingbull = "Flaming Bull"
+DISPLAY.lavaiguana = "Lava Iguana"
+DISPLAY.chillinchilli = "Chillin Chilli"
+DISPLAY.lavadragon = "Lava Dragon"
+DISPLAY.whaleshark = "Whale Shark"
+DISPLAY.belugawhale = "Beluga Whale"
+DISPLAY.elmaja = "El Maja"
+DISPLAY.trex = "T-Rex"
+DISPLAY.cosmicgecko = "Cosmic Gecko"
+DISPLAY.cosmicgorilla = "Cosmic Gorilla"
+DISPLAY.lavaccasaturnosaturnita = "La Vacca Saturno Saturnita"
+DISPLAY.cosmicdragon = "Cosmic Dragon"
+DISPLAY.cosmicskeletonboss = "Cosmic Skeleton Boss"
+DISPLAY.eternallunardragon = "Eternal Lunar Dragon"
+DISPLAY.redpanda = "Red Panda"
+DISPLAY.snowyowl = "Snowy Owl"
+DISPLAY.onitiger = "Oni Tiger"
+
+-- kunci diurut dari terpanjang: "kingmammoth" harus menang atas "mammoth",
+-- "icedragon" atas "dragon", "sandspider" atas "spider"
+local DB_KEYS = {}
+for k in pairs(DB) do DB_KEYS[#DB_KEYS + 1] = k end
+table.sort(DB_KEYS, function(a, b) return #a > #b end)
+
+local function normalize(s)
+  return (tostring(s or ""):lower():gsub("[^%a]", ""))
+end
+
+-- cocokkan nama objek ke database pet
+local function dbLookup(name)
+  local n = normalize(name)
+  if n == "" then return nil end
+  n = n:gsub("egg", "")           -- "leviathanegg" -> "leviathan"
+  if DB[n] then return n end
+  for _, k in ipairs(DB_KEYS) do
+    if #k >= 4 and n:find(k, 1, true) then return k end
+  end
+  return nil
+end
+
+-- versi ketat: hanya cocok kalau nama objek PERSIS nama pet (setelah membuang
+-- kata "egg" dan tanda baca). Dipakai untuk memutuskan apakah suatu objek
+-- adalah telur, supaya "BearTrap" tidak keliru dianggap telur Bear.
+local function dbExact(name)
+  local n = normalize(name):gsub("egg", "")
+  if n ~= "" and DB[n] then return n end
+  return nil
+end
+
+-- format uang: 1800000000 -> "$1.8B/s"
+local function money(v)
+  if not v then return "?" end
+  local a = math.abs(v)
+  if a >= 1e9 then return string.format("$%.3gB/s", v / 1e9) end
+  if a >= 1e6 then return string.format("$%.3gM/s", v / 1e6) end
+  if a >= 1e3 then return string.format("$%.3gK/s", v / 1e3) end
+  return string.format("$%d/s", math.floor(v))
+end
+
+-- berat kg singkat: 3240000 -> "3.24Mkg"
+local function kg(v)
+  if not v or v <= 0 then return nil end
+  if v >= 1e6 then return string.format("%.3gMkg", v / 1e6) end
+  if v >= 1e3 then return string.format("%.3gKkg", v / 1e3) end
+  return string.format("%dkg", math.floor(v))
+end
 
 
 -- ============ UTIL ============
@@ -104,14 +311,14 @@ end
 
 local function dist(a, b) return (a - b).Magnitude end
 
--- ambil semua teks di dalam objek (label rarity biasanya di BillboardGui/TextLabel)
+-- ambil semua teks di dalam objek (kalau game memang memasang label)
 local function textBlob(inst)
   local t = { inst.Name }
   for _, d in ipairs(inst:GetDescendants()) do
     if d:IsA("TextLabel") or d:IsA("TextBox") then
       t[#t + 1] = d.Text
     elseif d:IsA("StringValue") then
-      t[#t + 1] = d.Value
+      t[#t + 1] = d.Name .. "=" .. tostring(d.Value)
     elseif d:IsA("NumberValue") or d:IsA("IntValue") then
       t[#t + 1] = d.Name .. "=" .. tostring(d.Value)
     end
@@ -119,24 +326,58 @@ local function textBlob(inst)
   return table.concat(t, " | ")
 end
 
--- deteksi rarity dari teks apa pun di objek telur
+-- Rarity: DATABASE PET DULU, label teks cuma cadangan.
+-- Versi lama hanya mencari kata rarity di teks. Game tidak menempelkan label
+-- itu, jadi hampir semua telur jadi nil dan filter menolak semuanya —
+-- inilah sebabnya "cuma Uncommon yang kena": satu-satunya telur yang teksnya
+-- kebetulan memuat kata rarity. Sekarang nama pet dipetakan ke rarity resmi.
 local function rarityOf(inst)
-  local blob = lower(textBlob(inst))
-  -- cek dari yang tertinggi supaya "Secret" tak tertimpa "Rare"
-  for i = #RARITY, 1, -1 do
-    local r = RARITY[i]
-    if blob:find(lower(r), 1, true) then return r end
+  local key = dbLookup(inst.Name)
+  if key then return DB[key][1], key end
+
+  -- cadangan: cari nama pet di seluruh teks objek
+  local blob = textBlob(inst)
+  local k2 = dbLookup(blob)
+  if k2 then return DB[k2][1], k2 end
+
+  -- cadangan terakhir: kata rarity eksplisit di teks.
+  -- "Uncommon" wajib diuji sebelum "Common" (substring!), jadi urut dari
+  -- yang terpanjang, bukan dari indeks tabel.
+  local lb = lower(blob)
+  local order = { "Divine", "Eternal", "Secret", "Cosmic", "Mythic",
+                  "Legendary", "Uncommon", "Common", "Epic", "Rare" }
+  for _, r in ipairs(order) do
+    -- batas kata supaya "Rare" tidak ikut kena dari "Rarest"/"Uncommon"
+    local pat = "%f[%a]" .. lower(r) .. "%f[%A]"
+    if lb:find(pat) then return r, nil end
   end
-  return nil
+  return nil, nil
+end
+
+-- income per detik dari database (nil kalau pet tidak dikenal)
+local function incomeOf(inst, key)
+  key = key or dbLookup(inst.Name) or dbLookup(textBlob(inst))
+  if key and DB[key] then return DB[key][2], DISPLAY[key] or key, DB[key][3] end
+  return nil, nil, nil
 end
 
 local function mutationOf(inst)
-  local blob = lower(textBlob(inst))
+  local blob = lower(textBlob(inst)) .. " " .. lower(inst.Name)
+  -- MUTATION sudah diurut dari terpanjang: "Spirit Bloom" sebelum "Bloom"
   for _, m in ipairs(MUTATION) do
     if blob:find(lower(m), 1, true) then return m end
   end
   return nil
 end
+
+-- pengali mutasi resmi
+local MUT_MULT = {
+  ["Spirit Bloom"] = 3.0,
+  ["Rainbow"]      = 2.5,
+  ["Golden"]       = 2.0,
+  ["Bloom"]        = 1.5,
+  ["Silver"]       = 1.25,
+}
 
 -- berat telur (kg) kalau ada
 local function weightOf(inst)
@@ -153,23 +394,46 @@ end
 
 local function isEggName(n)
   n = lower(n)
-  return n:find("egg") ~= nil and not n:find("eggs") -- hindari folder plural
+  return n:find("egg") ~= nil
 end
 
 -- ============ SCAN OBJEK ============
 local function scanEggs()
   local out = {}
+  local seen = {}
   for _, v in ipairs(Workspace:GetDescendants()) do
-    if (v:IsA("Model") or v:IsA("BasePart")) and isEggName(v.Name) then
-      local p = posOf(v)
-      if p then
-        out[#out + 1] = {
-          obj   = v,
-          pos   = p,
-          rar   = rarityOf(v),
-          mut   = mutationOf(v),
-          wt    = weightOf(v),
-        }
+    if (v:IsA("Model") or v:IsA("BasePart")) and not seen[v] then
+      local nameHit = isEggName(v.Name)
+      local dbHit = dbExact(v.Name)     -- ketat: "BearTrap" bukan telur Bear
+      if nameHit or dbHit then
+        -- kalau induknya sudah terdaftar, lewati anaknya (hindari duplikat)
+        local parentListed = false
+        local p = v.Parent
+        while p and p ~= Workspace do
+          if seen[p] then parentListed = true break end
+          p = p.Parent
+        end
+        if not parentListed then
+          local pos = posOf(v)
+          if pos then
+            seen[v] = true
+            local rar, key = rarityOf(v)
+            local inc, petName, biome = incomeOf(v, key)
+            local mut = mutationOf(v)
+            out[#out + 1] = {
+              obj    = v,
+              pos    = pos,
+              rar    = rar,
+              key    = key,
+              pet    = petName,
+              biome  = biome,
+              income = inc,
+              mut    = mut,
+              mult   = mut and MUT_MULT[mut] or 1,
+              wt     = weightOf(v),
+            }
+          end
+        end
       end
     end
   end
@@ -192,7 +456,6 @@ local function scanTraps()
 end
 
 local function scanHostiles()
-  -- bat / guard / guardian / beast: model dengan Humanoid yang bukan pemain
   local out = {}
   for _, v in ipairs(Workspace:GetDescendants()) do
     if v:IsA("Model") and v:FindFirstChildOfClass("Humanoid") and not Players:GetPlayerFromCharacter(v) then
@@ -220,7 +483,6 @@ local function myBase()
           return posOf(v) or (v:IsA("Model") and v:GetPivot().Position)
         end
       end
-      -- label nama di atas base
       for _, d in ipairs(v:GetDescendants()) do
         if d:IsA("TextLabel") and tostring(d.Text):find(LP.Name) then
           return posOf(v)
@@ -297,72 +559,113 @@ local function touchPart(part)
   end)
 end
 
--- ============ GERAK HALUS (glide, bukan TP) ============
-local flyBV, flyBG
+-- ============ GERAK: JALAN DI TANAH, TIDAK TERBANG ============
+-- Versi lama memakai BodyVelocity + PlatformStand. Itu penyebab dua keluhan:
+-- karakter melayang/terbang, dan begitu BodyVelocity dilepas karakter jatuh
+-- terhuyung karena PlatformStand mematikan kaki. Sekarang gerak memakai
+-- Humanoid:MoveTo() — animasi jalan normal, fisika normal, tidak ada terbang.
+
 local moving = false
+local moveConn = nil
+
+local function clearMoveHelpers()
+  local h = hrp()
+  if h then
+    for _, c in ipairs(h:GetChildren()) do
+      if c:IsA("BodyVelocity") or c:IsA("BodyGyro") or c:IsA("BodyPosition")
+        or c:IsA("AlignPosition") or c:IsA("LinearVelocity") then
+        c:Destroy()
+      end
+    end
+  end
+end
 
 local function stopGlide()
   moving = false
-  if flyBV then flyBV:Destroy(); flyBV = nil end
-  if flyBG then flyBG:Destroy(); flyBG = nil end
-  local h = hum()
-  if h then h.PlatformStand = false end
+  if moveConn then pcall(function() moveConn:Disconnect() end); moveConn = nil end
+  clearMoveHelpers()
+  local hu = hum()
+  if hu then
+    hu.PlatformStand = false          -- pastikan tidak pernah tertinggal true
+    hu.AutoRotate = true
+    pcall(function() hu:MoveTo(hrp() and hrp().Position or Vector3.zero) end)
+  end
 end
 
--- gerak ke target dengan kecepatan S.speed stud/detik, menghindari trap & musuh
-local function glideTo(target, timeout)
-  local h = hrp(); local hu = hum()
-  if not (h and hu) then return false end
+-- vektor hindar dari trap & musuh (dipakai untuk MENGGESER titik tujuan,
+-- bukan untuk mendorong badan — dorongan itu yang bikin terhuyung)
+local function avoidOffset(from)
+  local off = Vector3.zero
+  local r = S.avoidRadius
+  if S.antiTrap then
+    for _, t in ipairs(scanTraps()) do
+      local d = from - t.pos
+      local m = d.Magnitude
+      if m < r and m > 0.1 then
+        off = off + d.Unit * (r - m)
+      end
+    end
+  end
+  if S.antiBat then
+    for _, mo in ipairs(scanHostiles()) do
+      local d = from - mo.pos
+      local m = d.Magnitude
+      if m < r and m > 0.1 then
+        off = off + d.Unit * (r - m) * 1.3
+      end
+    end
+  end
+  return Vector3.new(off.X, 0, off.Z)   -- selalu horizontal: tidak ada naik
+end
+
+-- jalan ke target. speedOverride dipakai tab STEAL supaya kecepatan
+-- steal bisa beda dari kecepatan jalan biasa.
+local function walkTo(target, timeout, speedOverride)
+  local hu = hum()
+  local h = hrp()
+  if not (hu and h) then return false end
   timeout = timeout or 25
   moving = true
 
-  if not flyBV then
-    flyBV = Instance.new("BodyVelocity")
-    flyBV.MaxForce = Vector3.new(1e6, 1e6, 1e6)
-    flyBV.P = 8000
-    flyBV.Velocity = Vector3.zero
-    flyBV.Parent = h
-  end
+  local spd = math.clamp(speedOverride or S.speed, 8, 1000)
+  hu.WalkSpeed = spd
+  hu.PlatformStand = false
 
   local t0 = tick()
+  local stuckAt, stuckT = h.Position, tick()
+
   while moving and alive() and tick() - t0 < timeout do
-    local cur = hrp(); if not cur then break end
-    local d = target - cur.Position
-    if d.Magnitude < 6 then break end
+    local cur = hrp()
+    if not cur then break end
+    local flat = Vector3.new(target.X - cur.Position.X, 0, target.Z - cur.Position.Z)
+    if flat.Magnitude < 5 then break end
 
-    local dir = d.Unit
+    local goal = target + avoidOffset(cur.Position)
+    hu.WalkSpeed = spd
+    hu:MoveTo(goal)
 
-    -- hindari trap & musuh: dorong arah menjauh
-    if S.antiTrap then
-      for _, t in ipairs(scanTraps()) do
-        local dd = t.pos - cur.Position
-        if dd.Magnitude < S.avoidRadius then
-          dir = (dir - dd.Unit * 1.4)
-          if dir.Magnitude > 0 then dir = dir.Unit end
-        end
+    -- lepas dari nyangkut: kalau 1,5 detik hampir tak bergerak, lompat sekali
+    if (tick() - stuckT) > 1.5 then
+      if (cur.Position - stuckAt).Magnitude < 4 then
+        pcall(function() hu.Jump = true end)
       end
-    end
-    if S.antiBat then
-      for _, m in ipairs(scanHostiles()) do
-        local dd = m.pos - cur.Position
-        if dd.Magnitude < S.avoidRadius then
-          dir = (dir - dd.Unit * 1.6) + Vector3.new(0, 0.35, 0)
-          if dir.Magnitude > 0 then dir = dir.Unit end
-        end
-      end
+      stuckAt, stuckT = cur.Position, tick()
     end
 
-    local spd = math.clamp(S.speed, 16, 1000)
-    flyBV.Velocity = dir * spd
-    hu.PlatformStand = true
-    task.wait(0.05)
+    task.wait(0.12)
   end
 
-  if flyBV then flyBV.Velocity = Vector3.zero end
-  local hu2 = hum(); if hu2 then hu2.PlatformStand = false end
   moving = false
+  local hu2 = hum()
+  if hu2 then
+    hu2.PlatformStand = false
+    if not S.speedOn then hu2.WalkSpeed = 16 end
+  end
   return true
 end
+
+-- nama lama dipertahankan supaya sisa kode & test tetap jalan
+local glideTo = walkTo
 
 -- ============ PILIH TELUR SESUAI FILTER ============
 local function anyRarityPicked()
@@ -370,34 +673,50 @@ local function anyRarityPicked()
   return false
 end
 
+-- skor telur: pakai income NYATA dari database kalau ada, bukan cuma indeks
 local function eggScore(e)
-  local idx = 0
-  if e.rar then
-    for i, r in ipairs(RARITY) do if r == e.rar then idx = i break end end
+  -- pengali mutasi: hormati e.mult kalau sudah dihitung, kalau tidak turunkan
+  -- dari nama mutasi (bikin fungsi ini aman dipanggil dengan tabel sederhana)
+  local mult = e.mult
+  if not mult then
+    mult = (e.mut and MUT_MULT[e.mut]) or 1
   end
-  local s = idx * 1000
+
+  local s = 0
+  if e.income then
+    -- log supaya Divine tidak membuat sisanya nol; dikali pengali mutasi
+    s = math.log(math.max(e.income, 1) * mult) * 1000
+  else
+    local idx = 0
+    if e.rar then
+      for i, r in ipairs(RARITY) do if r == e.rar then idx = i break end end
+    end
+    s = idx * 1000
+  end
   if S.preferMutasi and e.mut then
-    local mi = 0
-    for i, m in ipairs(MUTATION) do if m == e.mut then mi = (#MUTATION - i + 1) break end end
-    s = s + mi * 300
+    s = s + (mult - 1) * 900
   end
-  s = s + math.min(e.wt / 1000, 500)
+  s = s + math.min((e.wt or 0) / 100000, 400)
   return s
 end
 
 local function pickEgg()
   local h = hrp(); if not h then return nil end
   local filter = anyRarityPicked()
-  local best, bestScore = nil, -1
+  local best, bestScore = nil, -math.huge
   for _, e in ipairs(scanEggs()) do
     local okRar = true
     if filter then
       okRar = (e.rar ~= nil) and S.rarityPick[e.rar] == true
     end
-    local okWt = (S.minWeight <= 0) or (e.wt >= S.minWeight)
-    if okRar and okWt then
-      local sc = eggScore(e) - dist(h.Position, e.pos) * 0.05
-      if sc > bestScore then bestScore, best = sc, e end
+    local okWt = (S.minWeight <= 0) or ((e.wt or 0) >= S.minWeight)
+    local okInc = (S.minIncome <= 0) or ((e.income or 0) >= S.minIncome)
+    if okRar and okWt and okInc then
+      local d = dist(h.Position, e.pos)
+      if d <= S.maxRange then
+        local sc = eggScore(e) - d * 0.08
+        if sc > bestScore then bestScore, best = sc, e end
+      end
     end
   end
   return best
@@ -629,10 +948,14 @@ task.spawn(function()
           S.status = "nunggu telur cocok"
           return
         end
-        S.status = "menuju " .. (e.rar or "?") .. (e.mut and (" " .. e.mut) or "")
-        glideTo(e.pos, 20)
-        -- toggle bisa dimatikan saat masih di tengah jalan: batalkan sisa langkah
-        -- supaya tidak ada remote yang tertembak setelah user menekan OFF
+
+        local tag = (e.rar or "?")
+        if e.pet then tag = tag .. " " .. e.pet end
+        if e.mut then tag = e.mut .. " " .. tag end
+
+        S.status = "jalan ke " .. tag
+        -- kecepatan steal punya slider sendiri
+        walkTo(e.pos, 25, S.stealSpeed)
         if not S.stealOn then S.status = "dibatalkan"; return end
 
         -- ambil: prompt + touch + remote
@@ -646,8 +969,8 @@ task.spawn(function()
         if S.returnBase then
           local b = myBase()
           if b then
-            S.status = "bawa pulang"
-            glideTo(b, 30)
+            S.status = "bawa pulang " .. tag
+            walkTo(b, 35, S.stealSpeed)
             if not S.stealOn then S.status = "dibatalkan"; return end
             pressPromptsNear(26)
             fireMatch({ "deposit", "deliver", "placeegg", "storeegg", "submit" }, e.obj)
@@ -655,7 +978,7 @@ task.spawn(function()
         end
 
         S.stolen = S.stolen + 1
-        S.lastEgg = (e.rar or "?") .. (e.mut and (" " .. e.mut) or "")
+        S.lastEgg = tag .. (e.income and (" · " .. money(e.income * (e.mult or 1))) or "")
         S.status = "selesai #" .. S.stolen
       end)
       if not ok then S.status = "error: " .. tostring(err):sub(1, 40) end
@@ -679,7 +1002,7 @@ task.spawn(function()
   end
 end)
 
--- treadmill: kalau tak ada remote train, berdiri di treadmill (bukan TP jauh)
+-- treadmill: kalau tak ada remote train, jalan ke treadmill (bukan teleport)
 task.spawn(function()
   while true do
     task.wait(6)
@@ -689,7 +1012,7 @@ task.spawn(function()
           if (v:IsA("BasePart") or v:IsA("Model")) and lower(v.Name):find("treadmill") then
             local p = posOf(v)
             if p and hrp() and dist(hrp().Position, p) > 12 then
-              glideTo(p, 15)
+              walkTo(p, 20)
             end
             pressPromptsNear(20)
             break
@@ -707,20 +1030,27 @@ task.spawn(function()
     pcall(function()
       local h = hum()
       if not h then return end
-      if S.speedOn then
-        h.WalkSpeed = math.clamp(S.speed, 16, 1000)
-      elseif h.WalkSpeed > 40 then
-        h.WalkSpeed = 16
+
+      -- jangan ganggu WalkSpeed saat walkTo sedang mengatur kecepatan steal
+      if not moving then
+        if S.speedOn then
+          h.WalkSpeed = math.clamp(S.speed, 8, 1000)
+        elseif h.WalkSpeed > 40 then
+          h.WalkSpeed = 16
+        end
       end
+
+      -- PlatformStand tidak boleh pernah nyangkut true: itu yang bikin
+      -- karakter tampak jatuh-jatuh setelah bergerak
+      if h.PlatformStand and not moving then h.PlatformStand = false end
+
       if S.antiStun then
         h:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
         h:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
         h:SetStateEnabled(Enum.HumanoidStateType.Seated, false)
-        if h.PlatformStand and not moving then h.PlatformStand = false end
         h.Sit = false
       end
       if S.noFall then
-        h:SetStateEnabled(Enum.HumanoidStateType.Freefall, true)
         local hp = hrp()
         if hp and hp.Velocity.Y < -120 then
           hp.Velocity = Vector3.new(hp.Velocity.X, -20, hp.Velocity.Z)
@@ -730,105 +1060,112 @@ task.spawn(function()
   end
 end)
 
--- anti-bat pasif: kalau musuh terlalu dekat & tidak sedang gerak, mundur
-task.spawn(function()
-  while true do
-    task.wait(0.4)
-    if (S.antiBat or S.antiTrap) and alive() and not moving then
-      pcall(function()
-        local h = hrp(); if not h then return end
-        local push = Vector3.zero
-        if S.antiBat then
-          for _, m in ipairs(scanHostiles()) do
-            local d = h.Position - m.pos
-            if d.Magnitude < 14 then push = push + d.Unit end
-          end
-        end
-        if S.antiTrap then
-          for _, t in ipairs(scanTraps()) do
-            local d = h.Position - t.pos
-            if d.Magnitude < 12 then push = push + d.Unit end
-          end
-        end
-        if push.Magnitude > 0 then
-          local bv = Instance.new("BodyVelocity")
-          bv.MaxForce = Vector3.new(1e5, 0, 1e5)
-          bv.Velocity = push.Unit * 55
-          bv.Parent = h
-          task.wait(0.18)
-          bv:Destroy()
-        end
-      end)
-    end
-  end
-end)
-
 -- ============ ESP ============
 local espF = Instance.new("Folder")
 espF.Name = "SAE_ESP"
 espF.Parent = CoreGui
 
-local function tagBox(inst, color, label)
-  local adornee = inst:IsA("Model") and inst or inst
+local function tagBox(inst, color, lines)
   local hl = Instance.new("Highlight")
-  hl.Adornee = adornee
+  hl.Adornee = inst
   hl.FillColor = color
   hl.OutlineColor = color
-  hl.FillTransparency = 0.65
+  hl.FillTransparency = 0.62
   hl.OutlineTransparency = 0
   hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
   hl.Parent = espF
 
-  if label then
+  if lines and #lines > 0 then
     local p = partOf(inst)
     if p then
       local bb = Instance.new("BillboardGui")
       bb.Adornee = p
-      bb.Size = UDim2.new(0, 150, 0, 20)
-      bb.StudsOffset = Vector3.new(0, 2.4, 0)
+      bb.Size = UDim2.new(0, 190, 0, 16 * #lines + 6)
+      bb.StudsOffset = Vector3.new(0, 2.8, 0)
       bb.AlwaysOnTop = true
       bb.Parent = espF
-      local tl = Instance.new("TextLabel")
-      tl.Size = UDim2.new(1, 0, 1, 0)
-      tl.BackgroundTransparency = 1
-      tl.Text = label
-      tl.Font = Enum.Font.GothamBold
-      tl.TextSize = 12
-      tl.TextColor3 = color
-      tl.TextStrokeTransparency = 0.4
-      tl.Parent = bb
+
+      local ll = Instance.new("UIListLayout")
+      ll.Parent = bb
+
+      for i, ln in ipairs(lines) do
+        local tl = Instance.new("TextLabel")
+        tl.Size = UDim2.new(1, 0, 0, 16)
+        tl.BackgroundTransparency = 1
+        tl.Text = ln
+        tl.Font = (i == 1) and Enum.Font.GothamBold or Enum.Font.Code
+        tl.TextSize = (i == 1) and 13 or 11
+        tl.TextColor3 = (i == 1) and color or Color3.fromRGB(225, 232, 242)
+        tl.TextStrokeTransparency = 0.25
+        tl.Parent = bb
+      end
     end
   end
 end
 
 task.spawn(function()
   while true do
-    task.wait(2.5)
+    task.wait(2)
     pcall(function()
       espF:ClearAllChildren()
       local h = hrp(); if not h then return end
 
       if S.espEgg then
+        local minIdx = S.espMinRarity
         for _, e in ipairs(scanEggs()) do
-          if dist(h.Position, e.pos) < 3000 then
-            local col = (e.rar and RCOLOR[e.rar]) or Color3.fromRGB(200, 200, 200)
-            local lbl = (e.rar or "Egg")
-            if e.mut then lbl = e.mut .. " " .. lbl end
-            if e.wt > 0 then lbl = lbl .. " · " .. string.format("%.0fkg", e.wt) end
-            lbl = lbl .. " · " .. math.floor(dist(h.Position, e.pos)) .. "m"
-            tagBox(e.obj, col, lbl)
+          local d = dist(h.Position, e.pos)
+          if d <= S.espRange then
+            local idx = 0
+            if e.rar then
+              for i, r in ipairs(RARITY) do if r == e.rar then idx = i break end end
+            end
+            -- telur tanpa rarity tetap ditampilkan kalau ambang di posisi 1
+            if idx >= minIdx or (idx == 0 and minIdx <= 1) then
+              local col = (e.rar and RCOLOR[e.rar]) or Color3.fromRGB(190, 195, 205)
+
+              -- baris 1: rarity + nama pet
+              local head = e.rar or "Egg"
+              if e.pet then head = head .. " · " .. e.pet end
+              if e.mut then head = e.mut .. " " .. head end
+
+              -- baris 2: income (dengan pengali mutasi kalau ada)
+              local l2
+              if e.income then
+                local base = money(e.income)
+                if e.mut and (e.mult or 1) > 1 then
+                  l2 = money(e.income * e.mult) .. "  (" .. base .. " ×" .. e.mult .. ")"
+                else
+                  l2 = base
+                end
+              else
+                l2 = "income belum diketahui"
+              end
+
+              -- baris 3: biome, berat, jarak
+              local bits = {}
+              if e.biome then bits[#bits + 1] = e.biome end
+              local w = kg(e.wt)
+              if w then bits[#bits + 1] = w end
+              bits[#bits + 1] = math.floor(d) .. "m"
+
+              tagBox(e.obj, col, { head, l2, table.concat(bits, " · ") })
+            end
           end
         end
       end
+
       if S.espTrap then
         for _, t in ipairs(scanTraps()) do
-          if dist(h.Position, t.pos) < 900 then tagBox(t.obj, Color3.fromRGB(255, 90, 90), "TRAP") end
+          local d = dist(h.Position, t.pos)
+          if d < 900 then tagBox(t.obj, Color3.fromRGB(255, 90, 90), { "TRAP", math.floor(d) .. "m" }) end
         end
       end
       if S.espGuard then
         for _, m in ipairs(scanHostiles()) do
-          if dist(h.Position, m.pos) < 1200 then
-            tagBox(m.obj, Color3.fromRGB(255, 160, 60), string.upper(m.kind))
+          local d = dist(h.Position, m.pos)
+          if d < 1200 then
+            tagBox(m.obj, Color3.fromRGB(255, 160, 60),
+              { string.upper(m.kind), math.floor(d) .. "m" })
           end
         end
       end
@@ -838,7 +1175,7 @@ task.spawn(function()
             local pp = pl.Character:FindFirstChild("HumanoidRootPart")
             if pp then
               tagBox(pl.Character, Color3.fromRGB(90, 200, 255),
-                pl.Name .. " · " .. math.floor(dist(h.Position, pp.Position)) .. "m")
+                { pl.Name, math.floor(dist(h.Position, pp.Position)) .. "m" })
             end
           end
         end
@@ -1351,11 +1688,11 @@ local function action(page, text, fn, tone)
 end
 
 
--- ============ TAB: STEAL ============
-makeTab("STEAL", 74)
-makeTab("FARM", 66)
-makeTab("PLAYER", 78)
-makeTab("ESP", 62)
+-- ============ TAB: STEAL / FARM / PLAYER / ESP ============
+makeTab("STEAL", 70)
+makeTab("FARM", 62)
+makeTab("PLAYER", 74)
+makeTab("ESP", 56)
 
 local pSteal  = makePage("STEAL")
 local pFarm   = makePage("FARM")
@@ -1363,19 +1700,30 @@ local pPlayer = makePage("PLAYER")
 local pEsp    = makePage("ESP")
 
 -- --- STEAL ---
-toggle(pSteal, "Auto Steal Egg", "gerak halus, tanpa teleport",
+toggle(pSteal, "Auto Steal Egg", "jalan di tanah, tidak terbang",
   function() return S.stealOn end,
   function(v) S.stealOn = v; if not v then stopGlide() end end)
 
 toggle(pSteal, "Bawa pulang ke base", "otomatis setor telur",
   function() return S.returnBase end, function(v) S.returnBase = v end)
 
-toggle(pSteal, "Prioritas telur mutasi", "Spirit Bloom > Rainbow > Golden",
+toggle(pSteal, "Prioritas telur mutasi", "Spirit Bloom 3x > Rainbow 2.5x > Golden 2x",
   function() return S.preferMutasi end, function(v) S.preferMutasi = v end)
+
+section(pSteal, "kecepatan steal")
+slider(pSteal, "Kecepatan saat steal", 16, 1000,
+  function() return S.stealSpeed end, function(v) S.stealSpeed = v end,
+  function(v) return v .. " stud" end)
+slider(pSteal, "Jeda antar steal", 0, 30,
+  function() return math.floor(S.stealDelay * 10) end,
+  function(v) S.stealDelay = v / 10 end,
+  function(v) return string.format("%.1f s", v / 10) end)
+slider(pSteal, "Jarak maksimum telur", 100, 5000,
+  function() return S.maxRange end, function(v) S.maxRange = v end,
+  function(v) return v .. " stud" end)
 
 section(pSteal, "pilih rarity")
 
--- grid rarity 2 kolom
 local rgrid = Instance.new("Frame")
 rgrid.Size = UDim2.new(1, 0, 0, 0)
 rgrid.AutomaticSize = Enum.AutomaticSize.Y
@@ -1424,18 +1772,18 @@ qll.Parent = rowQuick
 
 local function quick(text, fn)
   local b = Instance.new("TextButton")
-  b.Size = UDim2.new(0.333, -4, 1, 0)
+  b.Size = UDim2.new(0.25, -5, 1, 0)
   b.BackgroundColor3 = T.panel2
   b.Text = text
   b.Font = Enum.Font.GothamBold
-  b.TextSize = 11
+  b.TextSize = 10
   b.TextColor3 = T.txt
   b.AutoButtonColor = false
   b.Parent = rowQuick
   corner(b, 8)
   b.MouseButton1Click:Connect(function()
     fn()
-    for r, paint in pairs(rarityBtns) do paint() end
+    for _, paint in pairs(rarityBtns) do paint() end
   end)
 end
 quick("Semua", function() for _, r in ipairs(RARITY) do S.rarityPick[r] = true end end)
@@ -1444,16 +1792,30 @@ quick("Top 3", function()
   for _, r in ipairs(RARITY) do S.rarityPick[r] = false end
   S.rarityPick.Secret = true; S.rarityPick.Eternal = true; S.rarityPick.Divine = true
 end)
+quick("Cosmic+", function()
+  for _, r in ipairs(RARITY) do S.rarityPick[r] = false end
+  S.rarityPick.Cosmic = true; S.rarityPick.Secret = true
+  S.rarityPick.Eternal = true; S.rarityPick.Divine = true
+end)
 
-section(pSteal, "filter berat")
+section(pSteal, "filter nilai")
+slider(pSteal, "Income minimum", 0, 100,
+  function()
+    -- slider 0..100 dipetakan ke skala log $0 .. $1B
+    if S.minIncome <= 0 then return 0 end
+    return math.floor(math.log(S.minIncome) / math.log(10) * 100 / 9)
+  end,
+  function(v)
+    if v <= 0 then S.minIncome = 0
+    else S.minIncome = math.floor(10 ^ (v * 9 / 100)) end
+  end,
+  function(v)
+    if v <= 0 then return "abaikan" end
+    return money(math.floor(10 ^ (v * 9 / 100)))
+  end)
 slider(pSteal, "Berat minimum", 0, 5000000,
   function() return S.minWeight end, function(v) S.minWeight = v end,
-  function(v) return v <= 0 and "abaikan" or string.format("%d kg", v) end)
-
-slider(pSteal, "Jeda antar steal", 0, 30,
-  function() return math.floor(S.stealDelay * 10) end,
-  function(v) S.stealDelay = v / 10 end,
-  function(v) return string.format("%.1f s", v / 10) end)
+  function(v) return v <= 0 and "abaikan" or (kg(v) or tostring(v)) end)
 
 -- --- FARM ---
 section(pFarm, "otomatis")
@@ -1475,18 +1837,16 @@ action(pFarm, "Tekan prompt terdekat", function() pressPromptsNear(30) end)
 
 -- --- PLAYER ---
 section(pPlayer, "gerak")
-toggle(pPlayer, "Speed custom", "batas aman 1000 stud",
+toggle(pPlayer, "Speed custom", "kecepatan jalan biasa",
   function() return S.speedOn end, function(v) S.speedOn = v end)
-slider(pPlayer, "Kecepatan", 16, 1000,
+slider(pPlayer, "Kecepatan jalan", 16, 1000,
   function() return S.speed end, function(v) S.speed = v end,
   function(v) return v .. " stud" end)
-toggle(pPlayer, "Gerak halus (glide)", "mendekat mulus, bukan teleport",
-  function() return S.glide end, function(v) S.glide = v end)
 
 section(pPlayer, "keamanan")
-toggle(pPlayer, "Anti Trap", "hindari trap/spike/net otomatis",
+toggle(pPlayer, "Anti Trap", "geser jalur menjauh dari trap",
   function() return S.antiTrap end, function(v) S.antiTrap = v end)
-toggle(pPlayer, "Anti Bat / Guard", "menjauh saat musuh mendekat",
+toggle(pPlayer, "Anti Bat / Guard", "geser jalur menjauh dari musuh",
   function() return S.antiBat end, function(v) S.antiBat = v end)
 toggle(pPlayer, "Anti Stun / Ragdoll", "tolak state jatuh & duduk",
   function() return S.antiStun end, function(v) S.antiStun = v end)
@@ -1504,13 +1864,25 @@ action(pPlayer, "STOP semua", function()
   local h = hum(); if h then h.WalkSpeed = 16; h.PlatformStand = false end
   S.status = "semua dimatikan"
 end, "gold")
+action(pPlayer, "Perbaiki karakter", function()
+  -- lepas semua sisa gaya + PlatformStand: obat kalau karakter terhuyung
+  stopGlide()
+  local h = hum()
+  if h then
+    h.PlatformStand = false
+    h.Sit = false
+    h:ChangeState(Enum.HumanoidStateType.GettingUp)
+    h.WalkSpeed = S.speedOn and S.speed or 16
+  end
+  S.status = "karakter dibereskan"
+end)
 action(pPlayer, "Reset karakter", function()
   local h = hum(); if h then h.Health = 0 end
 end)
 
 -- --- ESP ---
 section(pEsp, "tampilkan")
-toggle(pEsp, "ESP Telur", "warna sesuai rarity + berat + jarak",
+toggle(pEsp, "ESP Telur", "rarity + nama pet + income $/s",
   function() return S.espEgg end, function(v) S.espEgg = v end)
 toggle(pEsp, "ESP Trap", "tandai semua trap merah",
   function() return S.espTrap end, function(v) S.espTrap = v end)
@@ -1519,9 +1891,17 @@ toggle(pEsp, "ESP Bat / Guard", "musuh penjaga nest",
 toggle(pEsp, "ESP Pemain", "nama + jarak pemain lain",
   function() return S.espPlayer end, function(v) S.espPlayer = v end)
 
-section(pEsp, "info")
+section(pEsp, "saringan tampilan")
+slider(pEsp, "Rarity minimum", 1, 10,
+  function() return S.espMinRarity end, function(v) S.espMinRarity = v end,
+  function(v) return RARITY[math.clamp(v, 1, 10)] or "?" end)
+slider(pEsp, "Jarak ESP", 200, 5000,
+  function() return S.espRange end, function(v) S.espRange = v end,
+  function(v) return v .. " stud" end)
+
+section(pEsp, "isi map sekarang")
 local infoBox = Instance.new("Frame")
-infoBox.Size = UDim2.new(1, 0, 0, 96)
+infoBox.Size = UDim2.new(1, 0, 0, 138)
 infoBox.BackgroundColor3 = T.panel
 infoBox.BorderSizePixel = 0
 infoBox.Parent = pEsp
@@ -1551,39 +1931,52 @@ task.spawn(function()
     task.wait(1)
     pcall(function()
       dot.BackgroundColor3 = S.stealOn and T.jade or T.txt2
-      statusTxt.Text = string.format("%s · dicuri: %d · terakhir: %s", S.status, S.stolen, S.lastEgg)
+      statusTxt.Text = string.format("%s · dicuri: %d · %s", S.status, S.stolen, S.lastEgg)
     end)
   end
 end)
 
 task.spawn(function()
   while true do
-    task.wait(3)
+    task.wait(2.5)
     pcall(function()
       if activePage ~= "ESP" then return end
       local eggs = scanEggs()
-      local byR = {}
+      local byR, known, best = {}, 0, nil
       for _, e in ipairs(eggs) do
         local k = e.rar or "?"
         byR[k] = (byR[k] or 0) + 1
+        if e.income then
+          known = known + 1
+          local val = e.income * (e.mult or 1)
+          if not best or val > (best.income * (best.mult or 1)) then best = e end
+        end
       end
       local parts = {}
       for _, r in ipairs(RARITY) do
-        if byR[r] then parts[#parts + 1] = r .. ":" .. byR[r] end
+        if byR[r] then parts[#parts + 1] = r:sub(1, 3) .. ":" .. byR[r] end
       end
-      if byR["?"] then parts[#parts + 1] = "tanpa label:" .. byR["?"] end
+      if byR["?"] then parts[#parts + 1] = "??:" .. byR["?"] end
+
+      local bestLine = "-"
+      if best then
+        bestLine = (best.mut and (best.mut .. " ") or "") .. (best.pet or "?")
+          .. " " .. money(best.income * (best.mult or 1))
+      end
+
       infoTxt.Text = table.concat({
-        "telur di map : " .. #eggs,
-        "trap         : " .. #scanTraps(),
-        "musuh        : " .. #scanHostiles(),
-        "remote       : " .. #remotes,
-        "rincian      : " .. (#parts > 0 and table.concat(parts, "  ") or "-"),
+        "telur     : " .. #eggs .. "  (dikenali: " .. known .. ")",
+        "rincian   : " .. (#parts > 0 and table.concat(parts, " ") or "-"),
+        "termahal  : " .. bestLine,
+        "trap      : " .. #scanTraps(),
+        "musuh     : " .. #scanHostiles(),
+        "remote    : " .. #remotes,
       }, "\n")
     end)
   end
 end)
 
-print("[SAE v2] loaded · remote=" .. #remotes)
+print("[SAE v3] loaded · remote=" .. #remotes)
 
 
 -- ============ TAB PREDIKSI ============
@@ -1848,6 +2241,17 @@ do
       indexRemotes = indexRemotes,
       getRemotes   = function() return remotes end,
       pressPromptsNear = pressPromptsNear,
+      -- database pet
+      DB           = DB,
+      DISPLAY      = DISPLAY,
+      dbLookup     = dbLookup,
+      dbExact      = dbExact,
+      incomeOf     = incomeOf,
+      money        = money,
+      kg           = kg,
+      MUT_MULT     = MUT_MULT,
+      walkTo       = walkTo,
+      avoidOffset  = avoidOffset,
       gui          = gui,
       win          = win,
       orb          = orb,

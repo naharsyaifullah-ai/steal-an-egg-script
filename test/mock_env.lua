@@ -54,7 +54,9 @@ Enum = {
   AutomaticSize = enumSet({ "None", "X", "Y", "XY" }),
   ApplyStrokeMode = enumSet({ "Contextual", "Border" }),
   HighlightDepthMode = enumSet({ "AlwaysOnTop", "Occluded" }),
-  HumanoidStateType = enumSet({ "Ragdoll", "FallingDown", "Seated", "Freefall", "Running" }),
+-- HumanoidStateType must include every state the script toggles or requests
+  HumanoidStateType = enumSet({ "Ragdoll", "FallingDown", "Seated", "Freefall",
+                                "Running", "GettingUp", "Landed", "Jumping" }),
   UserInputType = enumSet({ "MouseButton1", "MouseMovement", "Touch", "Keyboard" }),
   ZIndexBehavior = enumSet({ "Sibling", "Global" }),
 }
@@ -125,7 +127,13 @@ function Instance_new(class, parent)
     p.WalkSpeed = 16
     p.PlatformStand = false
     p.Sit = false
+    p.Jump = false
+    p.AutoRotate = true
+    p.MoveDirection = vec(0, 0, 0)
     p._states = {}
+    p._moveTarget = nil
+    p._moveCount = 0
+    p._stateChanges = {}
   end
   if class == "TextButton" then
     p.MouseButton1Click = newSignal()
@@ -205,6 +213,18 @@ function INST:SetStateEnabled(state, on)
 end
 function INST:GetStateEnabled(state)
   return rawget(self, "_p")._states[state.Name]
+end
+-- Humanoid:MoveTo — the real engine walks the character toward the target at
+-- WalkSpeed. The mock records the goal; PHYSICS_STEP does the walking so tests
+-- can assert on gradual, ground-based movement.
+function INST:MoveTo(pos)
+  local p = rawget(self, "_p")
+  p._moveTarget = pos
+  p._moveCount = (p._moveCount or 0) + 1
+end
+function INST:ChangeState(state)
+  local p = rawget(self, "_p")
+  table.insert(p._stateChanges, state.Name)
 end
 function INST:FireServer(...)
   local p = rawget(self, "_p")

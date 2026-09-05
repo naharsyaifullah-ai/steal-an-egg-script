@@ -1,8 +1,8 @@
--- ============ TAB: STEAL ============
-makeTab("STEAL", 74)
-makeTab("FARM", 66)
-makeTab("PLAYER", 78)
-makeTab("ESP", 62)
+-- ============ TAB: STEAL / FARM / PLAYER / ESP ============
+makeTab("STEAL", 70)
+makeTab("FARM", 62)
+makeTab("PLAYER", 74)
+makeTab("ESP", 56)
 
 local pSteal  = makePage("STEAL")
 local pFarm   = makePage("FARM")
@@ -10,19 +10,30 @@ local pPlayer = makePage("PLAYER")
 local pEsp    = makePage("ESP")
 
 -- --- STEAL ---
-toggle(pSteal, "Auto Steal Egg", "gerak halus, tanpa teleport",
+toggle(pSteal, "Auto Steal Egg", "jalan di tanah, tidak terbang",
   function() return S.stealOn end,
   function(v) S.stealOn = v; if not v then stopGlide() end end)
 
 toggle(pSteal, "Bawa pulang ke base", "otomatis setor telur",
   function() return S.returnBase end, function(v) S.returnBase = v end)
 
-toggle(pSteal, "Prioritas telur mutasi", "Spirit Bloom > Rainbow > Golden",
+toggle(pSteal, "Prioritas telur mutasi", "Spirit Bloom 3x > Rainbow 2.5x > Golden 2x",
   function() return S.preferMutasi end, function(v) S.preferMutasi = v end)
+
+section(pSteal, "kecepatan steal")
+slider(pSteal, "Kecepatan saat steal", 16, 1000,
+  function() return S.stealSpeed end, function(v) S.stealSpeed = v end,
+  function(v) return v .. " stud" end)
+slider(pSteal, "Jeda antar steal", 0, 30,
+  function() return math.floor(S.stealDelay * 10) end,
+  function(v) S.stealDelay = v / 10 end,
+  function(v) return string.format("%.1f s", v / 10) end)
+slider(pSteal, "Jarak maksimum telur", 100, 5000,
+  function() return S.maxRange end, function(v) S.maxRange = v end,
+  function(v) return v .. " stud" end)
 
 section(pSteal, "pilih rarity")
 
--- grid rarity 2 kolom
 local rgrid = Instance.new("Frame")
 rgrid.Size = UDim2.new(1, 0, 0, 0)
 rgrid.AutomaticSize = Enum.AutomaticSize.Y
@@ -71,18 +82,18 @@ qll.Parent = rowQuick
 
 local function quick(text, fn)
   local b = Instance.new("TextButton")
-  b.Size = UDim2.new(0.333, -4, 1, 0)
+  b.Size = UDim2.new(0.25, -5, 1, 0)
   b.BackgroundColor3 = T.panel2
   b.Text = text
   b.Font = Enum.Font.GothamBold
-  b.TextSize = 11
+  b.TextSize = 10
   b.TextColor3 = T.txt
   b.AutoButtonColor = false
   b.Parent = rowQuick
   corner(b, 8)
   b.MouseButton1Click:Connect(function()
     fn()
-    for r, paint in pairs(rarityBtns) do paint() end
+    for _, paint in pairs(rarityBtns) do paint() end
   end)
 end
 quick("Semua", function() for _, r in ipairs(RARITY) do S.rarityPick[r] = true end end)
@@ -91,16 +102,30 @@ quick("Top 3", function()
   for _, r in ipairs(RARITY) do S.rarityPick[r] = false end
   S.rarityPick.Secret = true; S.rarityPick.Eternal = true; S.rarityPick.Divine = true
 end)
+quick("Cosmic+", function()
+  for _, r in ipairs(RARITY) do S.rarityPick[r] = false end
+  S.rarityPick.Cosmic = true; S.rarityPick.Secret = true
+  S.rarityPick.Eternal = true; S.rarityPick.Divine = true
+end)
 
-section(pSteal, "filter berat")
+section(pSteal, "filter nilai")
+slider(pSteal, "Income minimum", 0, 100,
+  function()
+    -- slider 0..100 dipetakan ke skala log $0 .. $1B
+    if S.minIncome <= 0 then return 0 end
+    return math.floor(math.log(S.minIncome) / math.log(10) * 100 / 9)
+  end,
+  function(v)
+    if v <= 0 then S.minIncome = 0
+    else S.minIncome = math.floor(10 ^ (v * 9 / 100)) end
+  end,
+  function(v)
+    if v <= 0 then return "abaikan" end
+    return money(math.floor(10 ^ (v * 9 / 100)))
+  end)
 slider(pSteal, "Berat minimum", 0, 5000000,
   function() return S.minWeight end, function(v) S.minWeight = v end,
-  function(v) return v <= 0 and "abaikan" or string.format("%d kg", v) end)
-
-slider(pSteal, "Jeda antar steal", 0, 30,
-  function() return math.floor(S.stealDelay * 10) end,
-  function(v) S.stealDelay = v / 10 end,
-  function(v) return string.format("%.1f s", v / 10) end)
+  function(v) return v <= 0 and "abaikan" or (kg(v) or tostring(v)) end)
 
 -- --- FARM ---
 section(pFarm, "otomatis")
@@ -122,18 +147,16 @@ action(pFarm, "Tekan prompt terdekat", function() pressPromptsNear(30) end)
 
 -- --- PLAYER ---
 section(pPlayer, "gerak")
-toggle(pPlayer, "Speed custom", "batas aman 1000 stud",
+toggle(pPlayer, "Speed custom", "kecepatan jalan biasa",
   function() return S.speedOn end, function(v) S.speedOn = v end)
-slider(pPlayer, "Kecepatan", 16, 1000,
+slider(pPlayer, "Kecepatan jalan", 16, 1000,
   function() return S.speed end, function(v) S.speed = v end,
   function(v) return v .. " stud" end)
-toggle(pPlayer, "Gerak halus (glide)", "mendekat mulus, bukan teleport",
-  function() return S.glide end, function(v) S.glide = v end)
 
 section(pPlayer, "keamanan")
-toggle(pPlayer, "Anti Trap", "hindari trap/spike/net otomatis",
+toggle(pPlayer, "Anti Trap", "geser jalur menjauh dari trap",
   function() return S.antiTrap end, function(v) S.antiTrap = v end)
-toggle(pPlayer, "Anti Bat / Guard", "menjauh saat musuh mendekat",
+toggle(pPlayer, "Anti Bat / Guard", "geser jalur menjauh dari musuh",
   function() return S.antiBat end, function(v) S.antiBat = v end)
 toggle(pPlayer, "Anti Stun / Ragdoll", "tolak state jatuh & duduk",
   function() return S.antiStun end, function(v) S.antiStun = v end)
@@ -151,13 +174,25 @@ action(pPlayer, "STOP semua", function()
   local h = hum(); if h then h.WalkSpeed = 16; h.PlatformStand = false end
   S.status = "semua dimatikan"
 end, "gold")
+action(pPlayer, "Perbaiki karakter", function()
+  -- lepas semua sisa gaya + PlatformStand: obat kalau karakter terhuyung
+  stopGlide()
+  local h = hum()
+  if h then
+    h.PlatformStand = false
+    h.Sit = false
+    h:ChangeState(Enum.HumanoidStateType.GettingUp)
+    h.WalkSpeed = S.speedOn and S.speed or 16
+  end
+  S.status = "karakter dibereskan"
+end)
 action(pPlayer, "Reset karakter", function()
   local h = hum(); if h then h.Health = 0 end
 end)
 
 -- --- ESP ---
 section(pEsp, "tampilkan")
-toggle(pEsp, "ESP Telur", "warna sesuai rarity + berat + jarak",
+toggle(pEsp, "ESP Telur", "rarity + nama pet + income $/s",
   function() return S.espEgg end, function(v) S.espEgg = v end)
 toggle(pEsp, "ESP Trap", "tandai semua trap merah",
   function() return S.espTrap end, function(v) S.espTrap = v end)
@@ -166,9 +201,17 @@ toggle(pEsp, "ESP Bat / Guard", "musuh penjaga nest",
 toggle(pEsp, "ESP Pemain", "nama + jarak pemain lain",
   function() return S.espPlayer end, function(v) S.espPlayer = v end)
 
-section(pEsp, "info")
+section(pEsp, "saringan tampilan")
+slider(pEsp, "Rarity minimum", 1, 10,
+  function() return S.espMinRarity end, function(v) S.espMinRarity = v end,
+  function(v) return RARITY[math.clamp(v, 1, 10)] or "?" end)
+slider(pEsp, "Jarak ESP", 200, 5000,
+  function() return S.espRange end, function(v) S.espRange = v end,
+  function(v) return v .. " stud" end)
+
+section(pEsp, "isi map sekarang")
 local infoBox = Instance.new("Frame")
-infoBox.Size = UDim2.new(1, 0, 0, 96)
+infoBox.Size = UDim2.new(1, 0, 0, 138)
 infoBox.BackgroundColor3 = T.panel
 infoBox.BorderSizePixel = 0
 infoBox.Parent = pEsp
@@ -198,36 +241,49 @@ task.spawn(function()
     task.wait(1)
     pcall(function()
       dot.BackgroundColor3 = S.stealOn and T.jade or T.txt2
-      statusTxt.Text = string.format("%s · dicuri: %d · terakhir: %s", S.status, S.stolen, S.lastEgg)
+      statusTxt.Text = string.format("%s · dicuri: %d · %s", S.status, S.stolen, S.lastEgg)
     end)
   end
 end)
 
 task.spawn(function()
   while true do
-    task.wait(3)
+    task.wait(2.5)
     pcall(function()
       if activePage ~= "ESP" then return end
       local eggs = scanEggs()
-      local byR = {}
+      local byR, known, best = {}, 0, nil
       for _, e in ipairs(eggs) do
         local k = e.rar or "?"
         byR[k] = (byR[k] or 0) + 1
+        if e.income then
+          known = known + 1
+          local val = e.income * (e.mult or 1)
+          if not best or val > (best.income * (best.mult or 1)) then best = e end
+        end
       end
       local parts = {}
       for _, r in ipairs(RARITY) do
-        if byR[r] then parts[#parts + 1] = r .. ":" .. byR[r] end
+        if byR[r] then parts[#parts + 1] = r:sub(1, 3) .. ":" .. byR[r] end
       end
-      if byR["?"] then parts[#parts + 1] = "tanpa label:" .. byR["?"] end
+      if byR["?"] then parts[#parts + 1] = "??:" .. byR["?"] end
+
+      local bestLine = "-"
+      if best then
+        bestLine = (best.mut and (best.mut .. " ") or "") .. (best.pet or "?")
+          .. " " .. money(best.income * (best.mult or 1))
+      end
+
       infoTxt.Text = table.concat({
-        "telur di map : " .. #eggs,
-        "trap         : " .. #scanTraps(),
-        "musuh        : " .. #scanHostiles(),
-        "remote       : " .. #remotes,
-        "rincian      : " .. (#parts > 0 and table.concat(parts, "  ") or "-"),
+        "telur     : " .. #eggs .. "  (dikenali: " .. known .. ")",
+        "rincian   : " .. (#parts > 0 and table.concat(parts, " ") or "-"),
+        "termahal  : " .. bestLine,
+        "trap      : " .. #scanTraps(),
+        "musuh     : " .. #scanHostiles(),
+        "remote    : " .. #remotes,
       }, "\n")
     end)
   end
 end)
 
-print("[SAE v2] loaded · remote=" .. #remotes)
+print("[SAE v3] loaded · remote=" .. #remotes)

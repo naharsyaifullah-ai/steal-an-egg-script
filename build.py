@@ -11,8 +11,9 @@ OUT = ROOT / "sae.lua"
 
 PARTS = [
     "p01_head.lua",          # state, rarity table, mutations, colours
+    "p00_db.lua",            # pet/egg database: rarity + income per second
     "p02_scan.lua",          # eggs / traps / hostiles / base detection
-    "p03_move.lua",          # remote indexer + smooth glide movement
+    "p03_move.lua",          # remote indexer + ground walking (MoveTo)
     "p09_predict.lua",       # cycle-prediction engine
     "p04_loops.lua",         # steal / farm / player loops
     "p10_predict_loop.lua",  # watcher loop + auto chase

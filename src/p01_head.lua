@@ -1,8 +1,15 @@
 --[[
-  STEAL AN EGG — Delta Hub v2
+  STEAL AN EGG — Delta Hub v3
   Hermes Agent · 5 Sep 2026
-  Fitur: Steal Egg (filter rarity) | Farm | Player (anti trap/bat, speed 1000)
-  Gerak halus (glide), BUKAN teleport.
+  https://github.com/naharsyaifullah-ai/steal-an-egg-script
+
+  Perbaikan v3 (dari laporan bug):
+   · rarity dibaca dari DATABASE 80 pet, bukan label teks — dulu hampir semua
+     telur tak terbaca sehingga cuma satu rarity yang kena filter
+   · jalan pakai Humanoid:MoveTo, TIDAK terbang, tidak jatuh terhuyung
+   · kecepatan steal punya slider sendiri di tab STEAL
+   · ESP menampilkan rarity + nama pet + income $/s + mutasi + berat + jarak
+
   Resiko: cheat bisa kena ban. Pakai akun cadangan.
 ]]
 
@@ -14,7 +21,7 @@ local TweenService      = game:GetService("TweenService")
 local CoreGui           = game:GetService("CoreGui")
 local LP                = Players.LocalPlayer
 
--- urutan rarity dari paling rendah ke Divine (Steal An Egg, Sep 2026)
+-- urutan rarity dari terendah ke Divine (10 tier resmi)
 local RARITY = {
   "Common", "Uncommon", "Rare", "Epic", "Legendary",
   "Mythic", "Cosmic", "Secret", "Eternal", "Divine",
@@ -33,18 +40,22 @@ local RCOLOR = {
   Divine    = Color3.fromRGB(255, 255, 255),
 }
 
--- kata kunci mutasi (pengali income) — dipakai ESP + prioritas
+-- mutasi diurut dari NAMA TERPANJANG supaya "Spirit Bloom" tidak
+-- keliru terbaca sebagai "Bloom"
 local MUTATION = { "Spirit Bloom", "Rainbow", "Golden", "Bloom", "Silver" }
 
 -- ============ STATE ============
 local S = {
   -- steal
   stealOn      = false,
-  rarityPick   = {},        -- rarity terpilih (set)
-  minWeight    = 0,         -- 0 = abaikan
+  rarityPick   = {},
+  minWeight    = 0,
+  minIncome    = 0,        -- filter income $/s minimum
+  maxRange     = 3000,     -- jarak maksimum telur yang dikejar
   preferMutasi = true,
   returnBase   = true,
   stealDelay   = 0.35,
+  stealSpeed   = 120,      -- kecepatan khusus saat steal (stud/detik)
 
   -- farm
   autoHatch    = false,
@@ -55,8 +66,7 @@ local S = {
 
   -- player
   speedOn      = false,
-  speed        = 200,       -- stud/detik, maks 1000
-  glide        = true,       -- gerak halus, bukan TP
+  speed        = 60,       -- kecepatan jalan biasa
   antiTrap     = false,
   antiBat      = false,
   antiStun     = false,
@@ -68,6 +78,8 @@ local S = {
   espPlayer    = false,
   espTrap      = false,
   espGuard     = false,
+  espMinRarity = 1,        -- indeks RARITY minimum yang ditampilkan
+  espRange     = 3000,
 
   -- runtime
   status       = "idle",

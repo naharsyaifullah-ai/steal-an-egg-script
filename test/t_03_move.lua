@@ -1,106 +1,130 @@
 -- ---- t_03_move.lua ----
 local A = SAE
 
-sect("5. gerak halus (bukan teleport)")
+sect("5. jalan di tanah — TIDAK terbang")
 do
   local hrp = CHR:FindFirstChild("HumanoidRootPart")
   local hum = CHR:FindFirstChildOfClass("Humanoid")
-  hrp.Position = Vector3.new(0, 0, 0)
+  hrp.Position = Vector3.new(0, 5, 0)      -- Y = 5, harus tetap 5
+  local startY = hrp.Position.Y
 
   A.S.speed = 200
   A.S.antiTrap = false
   A.S.antiBat = false
 
-  local target = Vector3.new(380, 0, 0)
+  local target = Vector3.new(380, 5, 0)
   local samples = { hrp.Position.X }
-  local co = coroutine.create(function() A.glideTo(target, 40) end)
+  local ys = { hrp.Position.Y }
+  local co = coroutine.create(function() A.walkTo(target, 40) end)
   for _ = 1, 500 do
     if coroutine.status(co) == "dead" then break end
     local ok, err = coroutine.resume(co)
-    if not ok then print("   [glide error] " .. tostring(err)); break end
-    PHYSICS_STEP(0.05)
+    if not ok then print("   [walk error] " .. tostring(err)); break end
+    PHYSICS_STEP(0.12)
     samples[#samples + 1] = hrp.Position.X
+    ys[#ys + 1] = hrp.Position.Y
   end
+
+  check("karakter mendekat ke target", math.abs(hrp.Position.X - 380) < 12, hrp.Position.X)
+
+  -- inti keluhan "kok terbang": Y tidak boleh berubah sama sekali
+  local maxYDrift = 0
+  for _, y in ipairs(ys) do maxYDrift = math.max(maxYDrift, math.abs(y - startY)) end
+  check("ketinggian TIDAK berubah (tidak terbang)", maxYDrift < 0.01, maxYDrift)
 
   local maxJump = 0
   for i = 2, #samples do
     maxJump = math.max(maxJump, math.abs(samples[i] - samples[i - 1]))
   end
+  check("tidak ada lompatan teleport", maxJump <= (200 * 0.12) + 1.5, maxJump)
+  check("perjalanan bertahap (>15 langkah)", #samples > 15, #samples)
 
-  check("karakter mendekat ke target", math.abs(hrp.Position.X - 380) < 12, hrp.Position.X)
-  check("TIDAK ada lompatan teleport (langkah ≤ speed×dt)",
-    maxJump <= (200 * 0.05) + 1.5, maxJump)
-  check("perjalanan bertahap (>20 langkah)", #samples > 20, #samples)
-  check("BodyVelocity dipakai, CFrame tidak di-set langsung",
-    hrp:FindFirstChildOfClass("BodyVelocity") ~= nil)
+  -- gerak lewat MoveTo, bukan gaya fisika
+  check("memakai Humanoid:MoveTo", rawget(hum, "_p")._moveCount > 3,
+    rawget(hum, "_p")._moveCount)
+  check("TIDAK ada BodyVelocity (penyebab terbang)",
+    hrp:FindFirstChildOfClass("BodyVelocity") == nil)
+  check("TIDAK ada BodyGyro", hrp:FindFirstChildOfClass("BodyGyro") == nil)
+
+  -- inti keluhan "jatuh-jatuh": PlatformStand mematikan kaki
+  check("PlatformStand TIDAK pernah dinyalakan", hum.PlatformStand == false,
+    hum.PlatformStand)
 
   A.stopGlide()
-  check("stopGlide membersihkan BodyVelocity",
-    hrp:FindFirstChildOfClass("BodyVelocity") == nil)
-  check("PlatformStand dilepas setelah berhenti", hum.PlatformStand == false)
+  check("stopGlide melepas PlatformStand", hum.PlatformStand == false)
+  check("stopGlide bersih dari sisa gaya",
+    hrp:FindFirstChildOfClass("BodyVelocity") == nil
+    and hrp:FindFirstChildOfClass("BodyGyro") == nil)
 end
 
-sect("6. batas kecepatan 1000 stud")
+sect("6. kecepatan steal punya slider sendiri")
 do
   local hrp = CHR:FindFirstChild("HumanoidRootPart")
-  hrp.Position = Vector3.new(0, 0, 0)
+  local hum = CHR:FindFirstChildOfClass("Humanoid")
+  hrp.Position = Vector3.new(0, 5, 0)
 
-  A.S.speed = 99999          -- coba lewati batas
-  local co = coroutine.create(function() A.glideTo(Vector3.new(5000, 0, 0), 5) end)
+  -- kecepatan jalan biasa 60, kecepatan steal 300 → walkTo harus pakai 300
+  A.S.speed = 60
+  A.S.stealSpeed = 300
+  local co = coroutine.create(function() A.walkTo(Vector3.new(900, 5, 0), 5, A.S.stealSpeed) end)
   coroutine.resume(co)
-  local bv = hrp:FindFirstChildOfClass("BodyVelocity")
-  local mag = bv and bv.Velocity.Magnitude or 0
-  check("kecepatan glide dibatasi ≤1000 stud", mag <= 1000.5, mag)
+  check("override kecepatan steal dipakai", hum.WalkSpeed == 300, hum.WalkSpeed)
   A.stopGlide()
 
-  A.S.speed = 5              -- di bawah minimum
-  local hrp2 = CHR:FindFirstChild("HumanoidRootPart")
-  hrp2.Position = Vector3.new(0, 0, 0)
-  local co2 = coroutine.create(function() A.glideTo(Vector3.new(500, 0, 0), 5) end)
+  -- tanpa override → pakai S.speed
+  hrp.Position = Vector3.new(0, 5, 0)
+  local co2 = coroutine.create(function() A.walkTo(Vector3.new(900, 5, 0), 5) end)
   coroutine.resume(co2)
-  local bv2 = hrp2:FindFirstChildOfClass("BodyVelocity")
-  local mag2 = bv2 and bv2.Velocity.Magnitude or 0
-  check("kecepatan glide minimum 16 stud", mag2 >= 15.5, mag2)
+  check("tanpa override pakai kecepatan jalan biasa", hum.WalkSpeed == 60, hum.WalkSpeed)
   A.stopGlide()
+
+  -- batas atas 1000
+  hrp.Position = Vector3.new(0, 5, 0)
+  local co3 = coroutine.create(function() A.walkTo(Vector3.new(900, 5, 0), 5, 99999) end)
+  coroutine.resume(co3)
+  check("kecepatan dibatasi 1000 stud", hum.WalkSpeed == 1000, hum.WalkSpeed)
+  A.stopGlide()
+
   A.S.speed = 200
 end
 
-sect("7. anti trap & anti bat mengubah jalur")
+sect("7. anti trap & anti bat menggeser TUJUAN, bukan mendorong badan")
 do
   local hrp = CHR:FindFirstChild("HumanoidRootPart")
+  local hum = CHR:FindFirstChildOfClass("Humanoid")
 
-  -- trap tepat di depan (150,0,0), target di 200
-  local function firstDir(antiTrap, antiBat)
-    hrp.Position = Vector3.new(145, 0, 0)
+  local function goalAfterOneStep(antiTrap, antiBat, from, to)
+    hrp.Position = from
     A.S.antiTrap = antiTrap
     A.S.antiBat = antiBat
     A.S.avoidRadius = 26
-    local co = coroutine.create(function() A.glideTo(Vector3.new(200, 0, 0), 5) end)
+    rawget(hum, "_p")._moveTarget = nil
+    local co = coroutine.create(function() A.walkTo(to, 5) end)
     coroutine.resume(co)
-    local bv = hrp:FindFirstChildOfClass("BodyVelocity")
-    local v = bv and bv.Velocity or Vector3.new(0, 0, 0)
+    local g = rawget(hum, "_p")._moveTarget
     A.stopGlide()
-    return v
+    return g
   end
 
-  local plain = firstDir(false, false)
-  local avoid = firstDir(true, false)
-  check("tanpa anti-trap: lurus ke target (X positif dominan)",
-    plain.X > 0 and math.abs(plain.X) > math.abs(plain.Z), plain.X)
-  check("anti-trap mengubah vektor arah",
-    math.abs(avoid.X - plain.X) > 1 or math.abs(avoid.Z - plain.Z) > 1,
-    avoid.X .. "," .. avoid.Y .. "," .. avoid.Z)
+  -- trap di (150,0,0); berjalan dari 145 ke 200
+  local plain = goalAfterOneStep(false, false, Vector3.new(145, 5, 0), Vector3.new(200, 5, 0))
+  local avoid = goalAfterOneStep(true,  false, Vector3.new(145, 5, 0), Vector3.new(200, 5, 0))
+  check("tanpa anti-trap: tujuan = target apa adanya",
+    plain and math.abs(plain.X - 200) < 0.01 and math.abs(plain.Z) < 0.01,
+    plain and (plain.X .. "," .. plain.Z))
+  check("anti-trap menggeser tujuan menjauh dari trap",
+    avoid and (math.abs(avoid.X - 200) > 1 or math.abs(avoid.Z) > 1),
+    avoid and (avoid.X .. "," .. avoid.Y .. "," .. avoid.Z))
+  check("geseran anti-trap TIDAK menambah ketinggian (tetap di tanah)",
+    avoid and math.abs(avoid.Y - 5) < 0.01, avoid and avoid.Y)
 
-  -- bat di (310,0,5): target di 340 → harus terangkat / menyimpang
-  hrp.Position = Vector3.new(305, 0, 0)
-  A.S.antiTrap = false
-  A.S.antiBat = true
-  local co = coroutine.create(function() A.glideTo(Vector3.new(340, 0, 0), 5) end)
-  coroutine.resume(co)
-  local bv = hrp:FindFirstChildOfClass("BodyVelocity")
-  local v = bv and bv.Velocity or Vector3.new(0, 0, 0)
-  check("anti-bat memberi komponen naik (Y > 0)", v.Y > 0, v.Y)
-  A.stopGlide()
+  -- bat di (310,0,5)
+  local bat = goalAfterOneStep(false, true, Vector3.new(305, 5, 0), Vector3.new(340, 5, 0))
+  check("anti-bat menggeser tujuan",
+    bat and (math.abs(bat.X - 340) > 0.5 or math.abs(bat.Z) > 0.5),
+    bat and (bat.X .. "," .. bat.Z))
+  check("anti-bat juga tidak menaikkan Y", bat and math.abs(bat.Y - 5) < 0.01,
+    bat and bat.Y)
 
   A.S.antiTrap = false
   A.S.antiBat = false

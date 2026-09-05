@@ -62,72 +62,113 @@ local function touchPart(part)
   end)
 end
 
--- ============ GERAK HALUS (glide, bukan TP) ============
-local flyBV, flyBG
+-- ============ GERAK: JALAN DI TANAH, TIDAK TERBANG ============
+-- Versi lama memakai BodyVelocity + PlatformStand. Itu penyebab dua keluhan:
+-- karakter melayang/terbang, dan begitu BodyVelocity dilepas karakter jatuh
+-- terhuyung karena PlatformStand mematikan kaki. Sekarang gerak memakai
+-- Humanoid:MoveTo() — animasi jalan normal, fisika normal, tidak ada terbang.
+
 local moving = false
+local moveConn = nil
+
+local function clearMoveHelpers()
+  local h = hrp()
+  if h then
+    for _, c in ipairs(h:GetChildren()) do
+      if c:IsA("BodyVelocity") or c:IsA("BodyGyro") or c:IsA("BodyPosition")
+        or c:IsA("AlignPosition") or c:IsA("LinearVelocity") then
+        c:Destroy()
+      end
+    end
+  end
+end
 
 local function stopGlide()
   moving = false
-  if flyBV then flyBV:Destroy(); flyBV = nil end
-  if flyBG then flyBG:Destroy(); flyBG = nil end
-  local h = hum()
-  if h then h.PlatformStand = false end
+  if moveConn then pcall(function() moveConn:Disconnect() end); moveConn = nil end
+  clearMoveHelpers()
+  local hu = hum()
+  if hu then
+    hu.PlatformStand = false          -- pastikan tidak pernah tertinggal true
+    hu.AutoRotate = true
+    pcall(function() hu:MoveTo(hrp() and hrp().Position or Vector3.zero) end)
+  end
 end
 
--- gerak ke target dengan kecepatan S.speed stud/detik, menghindari trap & musuh
-local function glideTo(target, timeout)
-  local h = hrp(); local hu = hum()
-  if not (h and hu) then return false end
+-- vektor hindar dari trap & musuh (dipakai untuk MENGGESER titik tujuan,
+-- bukan untuk mendorong badan — dorongan itu yang bikin terhuyung)
+local function avoidOffset(from)
+  local off = Vector3.zero
+  local r = S.avoidRadius
+  if S.antiTrap then
+    for _, t in ipairs(scanTraps()) do
+      local d = from - t.pos
+      local m = d.Magnitude
+      if m < r and m > 0.1 then
+        off = off + d.Unit * (r - m)
+      end
+    end
+  end
+  if S.antiBat then
+    for _, mo in ipairs(scanHostiles()) do
+      local d = from - mo.pos
+      local m = d.Magnitude
+      if m < r and m > 0.1 then
+        off = off + d.Unit * (r - m) * 1.3
+      end
+    end
+  end
+  return Vector3.new(off.X, 0, off.Z)   -- selalu horizontal: tidak ada naik
+end
+
+-- jalan ke target. speedOverride dipakai tab STEAL supaya kecepatan
+-- steal bisa beda dari kecepatan jalan biasa.
+local function walkTo(target, timeout, speedOverride)
+  local hu = hum()
+  local h = hrp()
+  if not (hu and h) then return false end
   timeout = timeout or 25
   moving = true
 
-  if not flyBV then
-    flyBV = Instance.new("BodyVelocity")
-    flyBV.MaxForce = Vector3.new(1e6, 1e6, 1e6)
-    flyBV.P = 8000
-    flyBV.Velocity = Vector3.zero
-    flyBV.Parent = h
-  end
+  local spd = math.clamp(speedOverride or S.speed, 8, 1000)
+  hu.WalkSpeed = spd
+  hu.PlatformStand = false
 
   local t0 = tick()
+  local stuckAt, stuckT = h.Position, tick()
+
   while moving and alive() and tick() - t0 < timeout do
-    local cur = hrp(); if not cur then break end
-    local d = target - cur.Position
-    if d.Magnitude < 6 then break end
+    local cur = hrp()
+    if not cur then break end
+    local flat = Vector3.new(target.X - cur.Position.X, 0, target.Z - cur.Position.Z)
+    if flat.Magnitude < 5 then break end
 
-    local dir = d.Unit
+    local goal = target + avoidOffset(cur.Position)
+    hu.WalkSpeed = spd
+    hu:MoveTo(goal)
 
-    -- hindari trap & musuh: dorong arah menjauh
-    if S.antiTrap then
-      for _, t in ipairs(scanTraps()) do
-        local dd = t.pos - cur.Position
-        if dd.Magnitude < S.avoidRadius then
-          dir = (dir - dd.Unit * 1.4)
-          if dir.Magnitude > 0 then dir = dir.Unit end
-        end
+    -- lepas dari nyangkut: kalau 1,5 detik hampir tak bergerak, lompat sekali
+    if (tick() - stuckT) > 1.5 then
+      if (cur.Position - stuckAt).Magnitude < 4 then
+        pcall(function() hu.Jump = true end)
       end
-    end
-    if S.antiBat then
-      for _, m in ipairs(scanHostiles()) do
-        local dd = m.pos - cur.Position
-        if dd.Magnitude < S.avoidRadius then
-          dir = (dir - dd.Unit * 1.6) + Vector3.new(0, 0.35, 0)
-          if dir.Magnitude > 0 then dir = dir.Unit end
-        end
-      end
+      stuckAt, stuckT = cur.Position, tick()
     end
 
-    local spd = math.clamp(S.speed, 16, 1000)
-    flyBV.Velocity = dir * spd
-    hu.PlatformStand = true
-    task.wait(0.05)
+    task.wait(0.12)
   end
 
-  if flyBV then flyBV.Velocity = Vector3.zero end
-  local hu2 = hum(); if hu2 then hu2.PlatformStand = false end
   moving = false
+  local hu2 = hum()
+  if hu2 then
+    hu2.PlatformStand = false
+    if not S.speedOn then hu2.WalkSpeed = 16 end
+  end
   return true
 end
+
+-- nama lama dipertahankan supaya sisa kode & test tetap jalan
+local glideTo = walkTo
 
 -- ============ PILIH TELUR SESUAI FILTER ============
 local function anyRarityPicked()
@@ -135,34 +176,50 @@ local function anyRarityPicked()
   return false
 end
 
+-- skor telur: pakai income NYATA dari database kalau ada, bukan cuma indeks
 local function eggScore(e)
-  local idx = 0
-  if e.rar then
-    for i, r in ipairs(RARITY) do if r == e.rar then idx = i break end end
+  -- pengali mutasi: hormati e.mult kalau sudah dihitung, kalau tidak turunkan
+  -- dari nama mutasi (bikin fungsi ini aman dipanggil dengan tabel sederhana)
+  local mult = e.mult
+  if not mult then
+    mult = (e.mut and MUT_MULT[e.mut]) or 1
   end
-  local s = idx * 1000
+
+  local s = 0
+  if e.income then
+    -- log supaya Divine tidak membuat sisanya nol; dikali pengali mutasi
+    s = math.log(math.max(e.income, 1) * mult) * 1000
+  else
+    local idx = 0
+    if e.rar then
+      for i, r in ipairs(RARITY) do if r == e.rar then idx = i break end end
+    end
+    s = idx * 1000
+  end
   if S.preferMutasi and e.mut then
-    local mi = 0
-    for i, m in ipairs(MUTATION) do if m == e.mut then mi = (#MUTATION - i + 1) break end end
-    s = s + mi * 300
+    s = s + (mult - 1) * 900
   end
-  s = s + math.min(e.wt / 1000, 500)
+  s = s + math.min((e.wt or 0) / 100000, 400)
   return s
 end
 
 local function pickEgg()
   local h = hrp(); if not h then return nil end
   local filter = anyRarityPicked()
-  local best, bestScore = nil, -1
+  local best, bestScore = nil, -math.huge
   for _, e in ipairs(scanEggs()) do
     local okRar = true
     if filter then
       okRar = (e.rar ~= nil) and S.rarityPick[e.rar] == true
     end
-    local okWt = (S.minWeight <= 0) or (e.wt >= S.minWeight)
-    if okRar and okWt then
-      local sc = eggScore(e) - dist(h.Position, e.pos) * 0.05
-      if sc > bestScore then bestScore, best = sc, e end
+    local okWt = (S.minWeight <= 0) or ((e.wt or 0) >= S.minWeight)
+    local okInc = (S.minIncome <= 0) or ((e.income or 0) >= S.minIncome)
+    if okRar and okWt and okInc then
+      local d = dist(h.Position, e.pos)
+      if d <= S.maxRange then
+        local sc = eggScore(e) - d * 0.08
+        if sc > bestScore then bestScore, best = sc, e end
+      end
     end
   end
   return best

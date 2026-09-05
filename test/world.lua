@@ -16,16 +16,36 @@ function REPORT()
   print("==============================================")
 end
 
--- physics: BodyVelocity moves HumanoidRootPart, so glideTo can converge
+-- Walking physics: the real engine moves the character toward Humanoid.MoveTo's
+-- target at WalkSpeed, on the ground. Y never changes — that is what makes the
+-- "not flying" assertions meaningful.
 PHYSICS_STEP = function(dt)
   local chr = rawget(MOCK.LocalPlayer, "_p").Character
   if not chr then return end
   local hrp = chr:FindFirstChild("HumanoidRootPart")
-  if not hrp then return end
+  local hum = chr:FindFirstChildOfClass("Humanoid")
+  if not (hrp and hum) then return end
+
+  -- legacy BodyVelocity path (kept so old force-based code would still be
+  -- caught if it ever came back)
   local bv = hrp:FindFirstChildOfClass("BodyVelocity")
   if bv and bv.Velocity then
     hrp.Position = hrp.Position + bv.Velocity * dt
+    return
   end
+
+  local hp = rawget(hum, "_p")
+  local target = hp._moveTarget
+  if not target then return end
+  if hp.PlatformStand then return end     -- feet disabled: engine won't walk
+
+  local d = Vector3.new(target.X - hrp.Position.X, 0, target.Z - hrp.Position.Z)
+  local m = d.Magnitude
+  if m < 0.05 then return end
+  local step = math.min(hp.WalkSpeed * dt, m)
+  local mv = d.Unit * step
+  hrp.Position = Vector3.new(hrp.Position.X + mv.X, hrp.Position.Y, hrp.Position.Z + mv.Z)
+  hp.MoveDirection = d.Unit
 end
 
 local W = MOCK.Workspace
