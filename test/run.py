@@ -33,9 +33,12 @@ parts = [
     BUILT.read_text(),
     "\n-- ===== ASSERTIONS =====\n",
 ]
+# Each assertion file gets its own do...end scope: Luau allows only 200 locals
+# per function, and the bundled top level blew past that as the suite grew.
 for a in asserts:
-    parts.append(f"\n-- ---- {a.name} ----\n")
+    parts.append(f"\ndo -- ---- {a.name} ----\n")
     parts.append(a.read_text())
+    parts.append(f"\nend -- {a.name}\n")
 parts.append("\nREPORT()\n")
 
 BUNDLE.write_text("\n".join(parts))

@@ -150,6 +150,7 @@ function Instance_new(class, parent)
     -- real RemoteEvents expose OnClientEvent; the prediction hook connects to it
     p.OnClientEvent = newSignal()
   end
+  p._attrs = {}
   table.insert(ALL, o)
   if parent then o.Parent = parent end
   return o
@@ -225,6 +226,19 @@ end
 function INST:ChangeState(state)
   local p = rawget(self, "_p")
   table.insert(p._stateChanges, state.Name)
+end
+-- Attributes: modern Roblox games store the pet name here rather than in the
+-- object name, so the scanner must read them.
+function INST:SetAttribute(k, v)
+  rawget(self, "_p")._attrs[k] = v
+end
+function INST:GetAttribute(k)
+  return rawget(self, "_p")._attrs[k]
+end
+function INST:GetAttributes()
+  local out = {}
+  for k, v in pairs(rawget(self, "_p")._attrs or {}) do out[k] = v end
+  return out
 end
 function INST:FireServer(...)
   local p = rawget(self, "_p")

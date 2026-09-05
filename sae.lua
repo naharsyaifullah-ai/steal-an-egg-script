@@ -366,9 +366,35 @@ end
 
 local function dist(a, b) return (a - b).Magnitude end
 
--- ambil semua teks di dalam objek (kalau game memang memasang label)
+-- Kumpulkan SEMUA teks yang mungkin memuat nama pet: nama objek, nama induk,
+-- label, value, DAN Attribute. Attribute adalah yang paling sering dipakai game
+-- modern dan tidak dibaca v4 — itulah sebabnya ESP bilang "tidak ada di
+-- database" padahal petnya jelas terdaftar.
+local function attrBlob(inst)
+  local t = {}
+  local ok, attrs = pcall(function() return inst:GetAttributes() end)
+  if ok and type(attrs) == "table" then
+    for k, v in pairs(attrs) do
+      t[#t + 1] = tostring(k) .. "=" .. tostring(v)
+    end
+  end
+  return table.concat(t, " | ")
+end
+
 local function textBlob(inst)
   local t = { inst.Name }
+
+  -- rantai induk sampai 3 tingkat: sering "Nest > OniTiger > Egg"
+  local p = inst.Parent
+  local hops = 0
+  while p and hops < 3 and p ~= Workspace do
+    t[#t + 1] = p.Name
+    p = p.Parent
+    hops = hops + 1
+  end
+
+  t[#t + 1] = attrBlob(inst)
+
   for _, d in ipairs(inst:GetDescendants()) do
     if d:IsA("TextLabel") or d:IsA("TextBox") then
       t[#t + 1] = d.Text
@@ -376,26 +402,29 @@ local function textBlob(inst)
       t[#t + 1] = d.Name .. "=" .. tostring(d.Value)
     elseif d:IsA("NumberValue") or d:IsA("IntValue") then
       t[#t + 1] = d.Name .. "=" .. tostring(d.Value)
+    elseif d:IsA("BasePart") or d:IsA("Model") or d:IsA("MeshPart") then
+      -- nama part anak kadang memuat nama pet ("KitsuneMesh")
+      t[#t + 1] = d.Name
+      local ab = attrBlob(d)
+      if ab ~= "" then t[#t + 1] = ab end
     end
   end
   return table.concat(t, " | ")
 end
 
--- Rarity: DATABASE PET DULU, label teks cuma cadangan.
--- Game tidak menempelkan kata "Cosmic"/"Divine" pada telur, jadi versi lama
--- yang hanya membaca teks membuat hampir semua telur nil dan filter menolak
--- semuanya. Urutan pencocokan: nama persis -> nama tanpa awalan mutasi ->
--- nama longgar -> teks di dalam objek -> kata rarity eksplisit.
+-- Rarity & pet: cari nama pet di SEMUA sumber, dari yang paling tepat ke yang
+-- paling longgar. Urutan penting supaya "KingMammoth" tidak jadi "Mammoth".
 local function rarityOf(inst)
+  local blob = textBlob(inst)
+
+  -- 1. nama objek: persis -> tanpa awalan mutasi -> longgar
   local key = dbExact(inst.Name) or dbStripMutation(inst.Name) or dbLookup(inst.Name)
+  -- 2. kalau nama objek generik ("Egg", "Egg1"), cari di seluruh blob
+  if not key then key = dbLookup(blob) end
   if key then return DB[key][1], key end
 
-  local blob = textBlob(inst)
-  local k2 = dbLookup(blob)
-  if k2 then return DB[k2][1], k2 end
-
-  -- cadangan terakhir: kata rarity eksplisit di teks.
-  -- "Uncommon" wajib diuji sebelum "Common" (substring!), jadi urut manual.
+  -- 3. cadangan: kata rarity eksplisit di teks.
+  -- "Uncommon" wajib diuji sebelum "Common" (substring!).
   local lb = lower(blob)
   local order = { "Divine", "Eternal", "Secret", "Cosmic", "Mythic",
                   "Legendary", "Uncommon", "Common", "Epic", "Rare" }
@@ -408,8 +437,10 @@ end
 
 -- income per detik dari database (nil kalau pet tidak dikenal)
 local function incomeOf(inst, key)
-  key = key or dbExact(inst.Name) or dbStripMutation(inst.Name)
-    or dbLookup(inst.Name) or dbLookup(textBlob(inst))
+  if not key then
+    key = dbExact(inst.Name) or dbStripMutation(inst.Name) or dbLookup(inst.Name)
+      or dbLookup(textBlob(inst))
+  end
   if key and DB[key] then return DB[key][2], DISPLAY[key] or key, DB[key][3] end
   return nil, nil, nil
 end
@@ -2207,6 +2238,113 @@ action(pEsp, "Scan ulang remote", function()
   S.status = "remote terindeks: " .. n
 end)
 
+-- ============ DIAGNOSA NAMA TELUR ============
+-- Kalau ESP bilang "pet belum ada di database", masalahnya bukan datanya
+-- kurang — tapi nama objek di game tidak cocok dengan pola yang dicari.
+-- Tombol ini menampilkan nama MENTAH objek telur di sekitar (dan menyalinnya
+-- ke clipboard) supaya nama aslinya bisa ditambahkan ke database.
+section(pEsp, "diagnosa nama")
+local diagBox = Instance.new("Frame")
+diagBox.Size = UDim2.new(1, 0, 0, 150)
+diagBox.BackgroundColor3 = T.panel
+diagBox.BorderSizePixel = 0
+diagBox.Parent = pEsp
+corner(diagBox, 9)
+
+local diagScroll = Instance.new("ScrollingFrame")
+diagScroll.Size = UDim2.new(1, -14, 1, -12)
+diagScroll.Position = UDim2.new(0, 8, 0, 6)
+diagScroll.BackgroundTransparency = 1
+diagScroll.BorderSizePixel = 0
+diagScroll.ScrollBarThickness = 3
+diagScroll.ScrollBarImageColor3 = T.line
+diagScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+diagScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+diagScroll.Parent = diagBox
+
+local diagTxt = Instance.new("TextLabel")
+diagTxt.Size = UDim2.new(1, 0, 0, 0)
+diagTxt.AutomaticSize = Enum.AutomaticSize.Y
+diagTxt.BackgroundTransparency = 1
+diagTxt.Text = "tekan 'Lihat nama asli telur' di bawah"
+diagTxt.Font = Enum.Font.Code
+diagTxt.TextSize = 10
+diagTxt.TextColor3 = T.txt2
+diagTxt.TextXAlignment = Enum.TextXAlignment.Left
+diagTxt.TextYAlignment = Enum.TextYAlignment.Top
+diagTxt.TextWrapped = true
+diagTxt.Parent = diagScroll
+
+action(pEsp, "Lihat nama asli telur", function()
+  local eggs = scanEggs()
+  local lines = {}
+  local unknown = {}
+  for i, e in ipairs(eggs) do
+    if i > 14 then break end
+    local mark = e.key and ("OK " .. e.key) or "?? TAK COCOK"
+    lines[#lines + 1] = mark .. "  <- " .. tostring(e.obj.Name)
+      .. "  [" .. tostring(e.obj.ClassName) .. "]"
+    if not e.key then
+      unknown[#unknown + 1] = tostring(e.obj.Name)
+      -- tampilkan juga nama induk & anak: nama pet sering ada di sana
+      local kids = {}
+      for _, d in ipairs(e.obj:GetChildren()) do
+        kids[#kids + 1] = d.Name
+        if #kids >= 5 then break end
+      end
+      lines[#lines + 1] = "     induk: " .. tostring(e.obj.Parent and e.obj.Parent.Name)
+      if #kids > 0 then lines[#lines + 1] = "     anak : " .. table.concat(kids, ", ") end
+      local ok, attrs = pcall(function() return e.obj:GetAttributes() end)
+      if ok and type(attrs) == "table" then
+        local a = {}
+        for k, v in pairs(attrs) do a[#a + 1] = k .. "=" .. tostring(v) end
+        if #a > 0 then lines[#lines + 1] = "     attr : " .. table.concat(a, ", ") end
+      end
+    end
+  end
+  if #eggs == 0 then
+    diagTxt.Text = "tidak ada objek telur terdeteksi di sekitar.\n"
+      .. "berarti nama objeknya tidak memuat kata 'egg' DAN bukan nama pet.\n"
+      .. "pakai tombol di bawah untuk melihat objek apa saja yang dekat."
+  else
+    diagTxt.Text = table.concat(lines, "\n")
+      .. "\n\nnama tak cocok: " .. #unknown .. " dari " .. #eggs
+      .. "\n(disalin ke clipboard kalau executor mendukung)"
+  end
+  local blob = table.concat(unknown, "\n")
+  pcall(function() setclipboard(blob) end)
+  S.status = "diagnosa: " .. #eggs .. " telur, " .. #unknown .. " tak cocok"
+end, "gold")
+
+action(pEsp, "Lihat objek terdekat (semua)", function()
+  local h = hrp()
+  if not h then diagTxt.Text = "karakter tidak ada"; return end
+  local near = {}
+  for _, v in ipairs(Workspace:GetDescendants()) do
+    if v:IsA("Model") or v:IsA("BasePart") then
+      local p = posOf(v)
+      if p then
+        local d = dist(h.Position, p)
+        if d < 90 then near[#near + 1] = { n = v.Name, c = v.ClassName, d = d } end
+      end
+    end
+  end
+  table.sort(near, function(a, b) return a.d < b.d end)
+  local lines = {}
+  for i = 1, math.min(24, #near) do
+    lines[#lines + 1] = string.format("%3dm  %s  [%s]",
+      math.floor(near[i].d), near[i].n, near[i].c)
+  end
+  diagTxt.Text = (#lines > 0 and table.concat(lines, "\n") or "tidak ada objek dekat")
+    .. "\n\ntotal " .. #near .. " objek dalam 90 stud"
+  pcall(function()
+    local blob = {}
+    for i = 1, math.min(40, #near) do blob[#blob + 1] = near[i].n end
+    setclipboard(table.concat(blob, "\n"))
+  end)
+  S.status = "diagnosa objek: " .. #near .. " dalam 90 stud"
+end)
+
 showPage("STEAL")
 
 -- ============ STATUS TICKER ============
@@ -2555,6 +2693,11 @@ do
       showPage     = showPage,
       espFolder    = espF,
       statusTxt    = statusTxt,
+      diagTxt      = diagTxt,
+      textBlob     = textBlob,
+      attrBlob     = attrBlob,
+      rarityOf     = rarityOf,
+      scanEggs     = scanEggs,
       hideBtn      = hideBtn,
       rarityBtns   = rarityBtns,
       -- prediksi

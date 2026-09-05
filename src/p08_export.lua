@@ -55,6 +55,11 @@ do
       showPage     = showPage,
       espFolder    = espF,
       statusTxt    = statusTxt,
+      diagTxt      = diagTxt,
+      textBlob     = textBlob,
+      attrBlob     = attrBlob,
+      rarityOf     = rarityOf,
+      scanEggs     = scanEggs,
       hideBtn      = hideBtn,
       rarityBtns   = rarityBtns,
       -- prediksi

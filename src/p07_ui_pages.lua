@@ -247,6 +247,113 @@ action(pEsp, "Scan ulang remote", function()
   S.status = "remote terindeks: " .. n
 end)
 
+-- ============ DIAGNOSA NAMA TELUR ============
+-- Kalau ESP bilang "pet belum ada di database", masalahnya bukan datanya
+-- kurang — tapi nama objek di game tidak cocok dengan pola yang dicari.
+-- Tombol ini menampilkan nama MENTAH objek telur di sekitar (dan menyalinnya
+-- ke clipboard) supaya nama aslinya bisa ditambahkan ke database.
+section(pEsp, "diagnosa nama")
+local diagBox = Instance.new("Frame")
+diagBox.Size = UDim2.new(1, 0, 0, 150)
+diagBox.BackgroundColor3 = T.panel
+diagBox.BorderSizePixel = 0
+diagBox.Parent = pEsp
+corner(diagBox, 9)
+
+local diagScroll = Instance.new("ScrollingFrame")
+diagScroll.Size = UDim2.new(1, -14, 1, -12)
+diagScroll.Position = UDim2.new(0, 8, 0, 6)
+diagScroll.BackgroundTransparency = 1
+diagScroll.BorderSizePixel = 0
+diagScroll.ScrollBarThickness = 3
+diagScroll.ScrollBarImageColor3 = T.line
+diagScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+diagScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+diagScroll.Parent = diagBox
+
+local diagTxt = Instance.new("TextLabel")
+diagTxt.Size = UDim2.new(1, 0, 0, 0)
+diagTxt.AutomaticSize = Enum.AutomaticSize.Y
+diagTxt.BackgroundTransparency = 1
+diagTxt.Text = "tekan 'Lihat nama asli telur' di bawah"
+diagTxt.Font = Enum.Font.Code
+diagTxt.TextSize = 10
+diagTxt.TextColor3 = T.txt2
+diagTxt.TextXAlignment = Enum.TextXAlignment.Left
+diagTxt.TextYAlignment = Enum.TextYAlignment.Top
+diagTxt.TextWrapped = true
+diagTxt.Parent = diagScroll
+
+action(pEsp, "Lihat nama asli telur", function()
+  local eggs = scanEggs()
+  local lines = {}
+  local unknown = {}
+  for i, e in ipairs(eggs) do
+    if i > 14 then break end
+    local mark = e.key and ("OK " .. e.key) or "?? TAK COCOK"
+    lines[#lines + 1] = mark .. "  <- " .. tostring(e.obj.Name)
+      .. "  [" .. tostring(e.obj.ClassName) .. "]"
+    if not e.key then
+      unknown[#unknown + 1] = tostring(e.obj.Name)
+      -- tampilkan juga nama induk & anak: nama pet sering ada di sana
+      local kids = {}
+      for _, d in ipairs(e.obj:GetChildren()) do
+        kids[#kids + 1] = d.Name
+        if #kids >= 5 then break end
+      end
+      lines[#lines + 1] = "     induk: " .. tostring(e.obj.Parent and e.obj.Parent.Name)
+      if #kids > 0 then lines[#lines + 1] = "     anak : " .. table.concat(kids, ", ") end
+      local ok, attrs = pcall(function() return e.obj:GetAttributes() end)
+      if ok and type(attrs) == "table" then
+        local a = {}
+        for k, v in pairs(attrs) do a[#a + 1] = k .. "=" .. tostring(v) end
+        if #a > 0 then lines[#lines + 1] = "     attr : " .. table.concat(a, ", ") end
+      end
+    end
+  end
+  if #eggs == 0 then
+    diagTxt.Text = "tidak ada objek telur terdeteksi di sekitar.\n"
+      .. "berarti nama objeknya tidak memuat kata 'egg' DAN bukan nama pet.\n"
+      .. "pakai tombol di bawah untuk melihat objek apa saja yang dekat."
+  else
+    diagTxt.Text = table.concat(lines, "\n")
+      .. "\n\nnama tak cocok: " .. #unknown .. " dari " .. #eggs
+      .. "\n(disalin ke clipboard kalau executor mendukung)"
+  end
+  local blob = table.concat(unknown, "\n")
+  pcall(function() setclipboard(blob) end)
+  S.status = "diagnosa: " .. #eggs .. " telur, " .. #unknown .. " tak cocok"
+end, "gold")
+
+action(pEsp, "Lihat objek terdekat (semua)", function()
+  local h = hrp()
+  if not h then diagTxt.Text = "karakter tidak ada"; return end
+  local near = {}
+  for _, v in ipairs(Workspace:GetDescendants()) do
+    if v:IsA("Model") or v:IsA("BasePart") then
+      local p = posOf(v)
+      if p then
+        local d = dist(h.Position, p)
+        if d < 90 then near[#near + 1] = { n = v.Name, c = v.ClassName, d = d } end
+      end
+    end
+  end
+  table.sort(near, function(a, b) return a.d < b.d end)
+  local lines = {}
+  for i = 1, math.min(24, #near) do
+    lines[#lines + 1] = string.format("%3dm  %s  [%s]",
+      math.floor(near[i].d), near[i].n, near[i].c)
+  end
+  diagTxt.Text = (#lines > 0 and table.concat(lines, "\n") or "tidak ada objek dekat")
+    .. "\n\ntotal " .. #near .. " objek dalam 90 stud"
+  pcall(function()
+    local blob = {}
+    for i = 1, math.min(40, #near) do blob[#blob + 1] = near[i].n end
+    setclipboard(table.concat(blob, "\n"))
+  end)
+  S.status = "diagnosa objek: " .. #near .. " dalam 90 stud"
+end)
+
 showPage("STEAL")
 
 -- ============ STATUS TICKER ============
