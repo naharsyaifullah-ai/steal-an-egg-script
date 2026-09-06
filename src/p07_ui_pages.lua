@@ -48,7 +48,9 @@ local learnTxt = Instance.new("TextLabel")
 learnTxt.Size = UDim2.new(1, 0, 0, 0)
 learnTxt.AutomaticSize = Enum.AutomaticSize.Y
 learnTxt.BackgroundTransparency = 1
-learnTxt.Text = "belum merekam.\ntekan tombol di bawah, lalu ambil SATU telur pakai tanganmu sendiri."
+learnTxt.Text = SPY.onDisk
+  and ("resep tersimpan di berkas executor — dimuat otomatis.\ntekan 'Lihat cara ambil terpelajari' untuk melihatnya.")
+  or  ("belum ada resep tersimpan.\ntekan tombol di bawah, lalu ambil SATU telur pakai tanganmu sendiri.\n(sekali saja — hasilnya tersimpan permanen)")
 learnTxt.Font = Enum.Font.Code
 learnTxt.TextSize = 10
 learnTxt.TextColor3 = T.txt2
@@ -344,6 +346,56 @@ diagTxt.TextYAlignment = Enum.TextYAlignment.Top
 diagTxt.TextWrapped = true
 diagTxt.Parent = diagScroll
 
+action(pEsp, "Geledah struktur game (slot telur + prompt)", function()
+  local lines = {}
+  local sl = Workspace:FindFirstChild("AreaEggSlotsClient")
+  lines[#lines + 1] = "AreaEggSlotsClient: " .. (sl and #sl:GetChildren() or 0) .. " slot"
+  if sl then
+    for i, s in ipairs(sl:GetChildren()) do
+      if i > 10 then break end
+      local kids = {}
+      for _, d in ipairs(s:GetChildren()) do
+        kids[#kids + 1] = d.Name
+        if #kids >= 6 then break end
+      end
+      lines[#lines + 1] = "  " .. tostring(s.Name) .. " | anak: " .. table.concat(kids, ",")
+      local a = {}
+      pcall(function()
+        for k, v in pairs(s:GetAttributes()) do
+          a[#a + 1] = k .. "=" .. tostring(v)
+        end
+      end)
+      if #a > 0 then lines[#lines + 1] = "     attr: " .. table.concat(a, ", ") end
+    end
+  end
+  local ns = 0
+  for _, c in ipairs(Workspace:GetChildren()) do
+    if c.Name == "SmartPromptPart" then
+      for _, p in ipairs(c:GetChildren()) do
+        if p:IsA("ProximityPrompt") then ns = ns + 1 end
+      end
+    end
+  end
+  lines[#lines + 1] = "SmartPromptPart: " .. ns .. " prompt"
+  local plots = Workspace:FindFirstChild("Plots")
+  lines[#lines + 1] = "Plots: " .. (plots and #plots:GetChildren() or 0) .. " plot"
+  for _, fold in ipairs({ "Data", "Shared", "Packages" }) do
+    local f = RS:FindFirstChild(fold)
+    if f then
+      local kids = {}
+      for _, d in ipairs(f:GetChildren()) do
+        kids[#kids + 1] = d.Name
+        if #kids >= 10 then break end
+      end
+      lines[#lines + 1] = "RS." .. fold .. ": " .. table.concat(kids, ", ")
+    end
+  end
+  diagTxt.Text = table.concat(lines, "\n")
+    .. "\n\n(disalin ke clipboard kalau executor mendukung)"
+  pcall(function() setclipboard(table.concat(lines, "\n")) end)
+  S.status = "geledah struktur: " .. (sl and #sl:GetChildren() or 0) .. " slot, " .. ns .. " prompt"
+end, "gold")
+
 action(pEsp, "Lihat nama asli telur", function()
   local eggs = scanEggs()
   local lines = {}
@@ -482,4 +534,5 @@ task.spawn(function()
   end
 end)
 
-print("[SAE v5] loaded · remote=" .. #remotes .. " · db=" .. DB_COUNT)
+print("[SAE v6] loaded · remote=" .. #remotes .. " · db=" .. DB_COUNT
+  .. " · resep=" .. (SPY.onDisk and "termuat" or "belum ada"))

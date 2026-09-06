@@ -37,6 +37,41 @@ local function fireMatch(words, ...)
   return n
 end
 
+-- cari remote berdasar nama persis — dipakai memuat resep tersimpan
+local function findRemoteByName(name)
+  if not name then return nil end
+  indexRemotes()
+  for _, r in ipairs(remotes) do
+    if r.Name == name then return r end
+  end
+  return nil
+end
+
+-- SmartPromptPart: game ini MEMUSATKAN prompt ambil di sini (bukan prompt di
+-- dalam telur). Tanpa menembaknya, mendekat + sentuh saja tidak pernah
+-- mengambil apa pun. HoldDuration dinolkan dulu: dengan nilai bawaan,
+-- fireproximityprompt sering tidak berefek.
+local function fireSmartPrompts()
+  local n = 0
+  for _, c in ipairs(Workspace:GetChildren()) do
+    if c.Name == "SmartPromptPart" then
+      for _, p in ipairs(c:GetChildren()) do
+        if p:IsA("ProximityPrompt") then
+          pcall(function()
+            p.Enabled = true
+            p.MaxActivationDistance = math.max(p.MaxActivationDistance or 0, 60)
+            p.RequiresLineOfSight = false
+            p.HoldDuration = 0
+            fireproximityprompt(p)
+          end)
+          n = n + 1
+        end
+      end
+    end
+  end
+  return n
+end
+
 -- tekan prompt: HoldDuration harus dinolkan dulu, kalau tidak
 -- fireproximityprompt sering tidak menghasilkan apa pun
 local function pressPromptsNear(radius)
@@ -250,6 +285,10 @@ local function eggScore(e)
     s = idx * 1000
   end
   if S.preferMutasi and e.mut then s = s + (mult - 1) * 900 end
+  -- telur bertanda RareAreaEggHighlight / parasit diprioritaskan walau
+  -- rarity-nya belum terbaca database
+  if e.rare then s = s + 50000 end
+  if e.kind == "parasite" then s = s + 10000 end
   s = s + math.min((e.wt or 0) / 100000, 400)
   return s
 end

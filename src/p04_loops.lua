@@ -89,8 +89,10 @@ end
 local function grabAttempt(e)
   local acts = 0
 
-  -- 1. selalu: prompt di dalam telur + sentuh semua part (cara pemain asli)
+  -- 1. selalu: prompt di dalam telur + SmartPromptPart (pusat prompt game ini)
+  --    + prompt lain yang dekat + sentuh semua part (cara pemain asli)
   acts = acts + promptsInside(e.obj, 26)
+  acts = acts + fireSmartPrompts()
   acts = acts + pressPromptsNear(30)
   acts = acts + touchAllParts(e.obj)
 
@@ -371,6 +373,8 @@ task.spawn(function()
 
               -- baris 3: biome, berat, jarak
               local bits = {}
+              if e.rare then bits[#bits + 1] = "RARE" end
+              if e.kind == "parasite" then bits[#bits + 1] = "PARASIT" end
               if e.biome then bits[#bits + 1] = e.biome end
               local w = kg(e.wt)
               if w then bits[#bits + 1] = w end

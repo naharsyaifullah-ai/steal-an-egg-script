@@ -14,7 +14,11 @@ parts = [
     (SAE / "test/mock_services.lua").read_text(),
     (SAE / "test/world.lua").read_text(),
     "\n-- ===== SCRIPT UNDER TEST =====\n",
+    "-- do-end memberi scope sendiri supaya local-register Luau (maks 200)\n",
+    "-- tidak meledak ketika script dan harness digabung.\n",
+    "do\n",
     BUILT.read_text(),
+    "\nend -- script under test\n",
     """
 -- ===== PRODUCTION ASSERTIONS =====
 sect("P. mode produksi (tanpa flag test)")

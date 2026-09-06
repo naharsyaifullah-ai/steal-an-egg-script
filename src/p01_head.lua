@@ -1,14 +1,22 @@
 --[[
-  STEAL AN EGG — Delta Hub v3
-  Hermes Agent · 5 Sep 2026
+  STEAL AN EGG — Delta Hub v6
+  Hermes Agent · 6 Sep 2026
   https://github.com/naharsyaifullah-ai/steal-an-egg-script
 
-  Perbaikan v3 (dari laporan bug):
-   · rarity dibaca dari DATABASE 80 pet, bukan label teks — dulu hampir semua
-     telur tak terbaca sehingga cuma satu rarity yang kena filter
-   · jalan pakai Humanoid:MoveTo, TIDAK terbang, tidak jatuh terhuyung
-   · kecepatan steal punya slider sendiri di tab STEAL
-   · ESP menampilkan rarity + nama pet + income $/s + mutasi + berat + jarak
+  Perbaikan v6 (diselidiki dari script autofarm publik yang masih berfungsi):
+   · telur game ini TIDAK bernama "Egg" — mereka hidup di
+     workspace.AreaEggSlotsClient (slot berisi part "Plane"), telur event
+     berdiri sendiri dengan anak "Hitbox". v5 mencari nama 'egg' → ESP dan
+     auto steal sama-sama tidak menemukan apa pun. v6 memindai struktur asli
+     ini + tetap memakai deteksi nama generik sebagai cadangan.
+   · prompt ambil game ini DIPUSATKAN di workspace.SmartPromptPart, bukan di
+     dalam telur — fireSmartPrompts() menembaknya dengan HoldDuration = 0.
+   · resep hasil AJARI tersimpan ke berkas executor (writefile) dan dimuat
+     ulang otomatis — AJARI cukup sekali, bukan tiap sesi.
+   · base dibaca dari workspace.Plots (pemilik dicocokkan dengan nama),
+     zona peta (11 zona) dari koordinat terukur.
+   · tombol "Geledah struktur game" membedah AreaEggSlotsClient, prompt,
+     Plots, dan module ReplicatedStorage kalau data masih belum cocok.
 
   Resiko: cheat bisa kena ban. Pakai akun cadangan.
 ]]

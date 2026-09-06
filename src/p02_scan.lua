@@ -21,6 +21,54 @@ end
 
 local function dist(a, b) return (a - b).Magnitude end
 
+-- cari BasePart pertama secara REKURSIF. FindFirstChildWhichIsA di beberapa
+-- executor/game hanya mencari anak langsung, padahal telur event menaruh
+-- Plane-nya di dalam Model beberapa lapis.
+local function firstPartOf(obj)
+  if not obj then return nil end
+  if obj:IsA("BasePart") then return obj end
+  for _, d in ipairs(obj:GetDescendants()) do
+    if d:IsA("BasePart") then return d end
+  end
+  return nil
+end
+
+local function findNamed(obj, name)
+  if not obj then return nil end
+  if obj.Name == name then return obj end
+  for _, d in ipairs(obj:GetDescendants()) do
+    if d.Name == name then return d end
+  end
+  return nil
+end
+
+-- Zona peta diukur dari game nyata (dipakai script autofarm publik yang masih
+-- berfungsi per Agu 2026): zona tersusun sepanjang sumbu X, pita Z tetap.
+-- Dipakai sebagai nama biome cadangan kalau database tidak mengenal pet-nya.
+local ZONES = {
+  { name = "Forest",         minX = 553.42,  maxX = 646.49  },
+  { name = "Lake",           minX = 653.01,  maxX = 793.51  },
+  { name = "Desert",         minX = 796.48,  maxX = 1005.04 },
+  { name = "Jungle",         minX = 1008.56, maxX = 1240.12 },
+  { name = "Snow",           minX = 1244.13, maxX = 1564.18 },
+  { name = "Volcano",        minX = 1568.33, maxX = 1949.58 },
+  { name = "Abyss Ocean",    minX = 1953.30, maxX = 2378.73 },
+  { name = "Prehistoric",    minX = 2382.87, maxX = 2884.09 },
+  { name = "Cosmic",         minX = 2888.03, maxX = 3523.51 },
+  { name = "Cherry Blossom", minX = 3527.67, maxX = 4263.53 },
+  { name = "Titan Temple",   minX = 4268.09, maxX = 5123.06 },
+}
+local ZONE_MINZ, ZONE_MAXZ = -433.40, -295.05
+
+local function zoneOf(pos)
+  if not pos then return nil end
+  if pos.Z < ZONE_MINZ or pos.Z > ZONE_MAXZ then return nil end
+  for _, z in ipairs(ZONES) do
+    if pos.X >= z.minX and pos.X <= z.maxX then return z.name end
+  end
+  return nil
+end
+
 -- Kumpulkan SEMUA teks yang mungkin memuat nama pet: nama objek, nama induk,
 -- label, value, DAN Attribute. Attribute adalah yang paling sering dipakai game
 -- modern dan tidak dibaca v4 — itulah sebabnya ESP bilang "tidak ada di
@@ -139,19 +187,74 @@ end
 -- ============ SCAN OBJEK ============
 -- myBase() harus didefinisikan SEBELUM scanEggs() karena scanEggs memakainya;
 -- kalau ditaruh di bawah, Lua membacanya sebagai global nil dan scan meledak.
+local baseCache, baseCacheT = nil, -1e9
+local function flushBaseCache()
+  baseCache, baseCacheT = nil, -1e9
+end
+
+local function plotOwnerIsMe(plot)
+  local hit = false
+  pcall(function()
+    for _, key in ipairs({ "Owner", "OwnerName", "Player", "PlayerName" }) do
+      local o = plot:FindFirstChild(key)
+      if o and o:IsA("ValueBase") and tostring(o.Value) == LP.Name then hit = true end
+    end
+  end)
+  if not hit then
+    pcall(function()
+      for _, v in pairs(plot:GetAttributes()) do
+        if tostring(v) == LP.Name then hit = true break end
+      end
+    end)
+  end
+  if not hit then
+    for _, d in ipairs(plot:GetDescendants()) do
+      if d:IsA("StringValue") and tostring(d.Value) == LP.Name then hit = true break end
+      if d:IsA("TextLabel") and tostring(d.Text):find(LP.Name, 1, true) then hit = true break end
+    end
+  end
+  return hit
+end
+
 local function myBase()
+  if tick() - baseCacheT < 5 then return baseCache end
+
+  -- game nyata: plot pemain ada di workspace.Plots (terverifikasi Agu 2026)
+  local plots = Workspace:FindFirstChild("Plots")
+  if plots then
+    for _, plot in ipairs(plots:GetChildren()) do
+      if (plot:IsA("Model") or plot:IsA("BasePart")) and plotOwnerIsMe(plot) then
+        local p = posOf(plot) or (plot:IsA("Model") and plot:GetPivot().Position)
+        if p then baseCache, baseCacheT = p, tick(); return p end
+      end
+    end
+    -- tanpa penanda pemilik: plot terdekat ke spawn kita (pemain lahir di plot sendiri)
+    local best, bestD = nil, math.huge
+    for _, plot in ipairs(plots:GetChildren()) do
+      local sp = plot:FindFirstChild("SpawnLocation")
+      if sp and sp:IsA("BasePart") then
+        local d = math.abs(sp.Position.X) + math.abs(sp.Position.Z)
+        if d < bestD then bestD, best = d, sp.Position end
+      end
+    end
+    if best then baseCache, baseCacheT = best, tick(); return best end
+  end
+
+  -- cadangan: objek bernama base/plot/garden dengan penanda pemain (game lain)
   for _, v in ipairs(Workspace:GetDescendants()) do
     local n = lower(v.Name)
     if (v:IsA("BasePart") or v:IsA("Model")) and (n:find("base") or n:find("plot") or n:find("garden")) then
       for _, key in ipairs({ "Owner", "OwnerName", "Player", "PlayerName" }) do
         local o = v:FindFirstChild(key)
         if o and o:IsA("ValueBase") and tostring(o.Value) == LP.Name then
-          return posOf(v) or (v:IsA("Model") and v:GetPivot().Position)
+          local p = posOf(v) or (v:IsA("Model") and v:GetPivot().Position)
+          if p then baseCache, baseCacheT = p, tick(); return p end
         end
       end
       for _, d in ipairs(v:GetDescendants()) do
         if d:IsA("TextLabel") and tostring(d.Text):find(LP.Name) then
-          return posOf(v)
+          local p = posOf(v)
+          if p then baseCache, baseCacheT = p, tick(); return p end
         end
       end
     end
@@ -160,12 +263,85 @@ local function myBase()
   return sp and sp.Position or nil
 end
 
+-- ============ TELUR GAME NYATA (v6) ============
+-- Game ini TIDAK menamai telurnya "Egg": telur hidup di
+-- workspace.AreaEggSlotsClient (tiap slot punya part "Plane"), telur event
+-- berdiri sendiri dengan anak "Hitbox", telur langka bertanda
+-- "RareAreaEggHighlight", telur parasit "MonsterParasiteVisual". Versi lama
+-- mencari nama 'egg' → tidak menemukan apa pun → "pet tidak ada di database".
+local function eggFromEntry(entryObj, kind, rare)
+  local part = entryObj:FindFirstChild("Plane") or firstPartOf(entryObj)
+  if not (part and part:IsA("BasePart")) then return nil end
+  local pos = part.Position
+  local rar, key = rarityOf(entryObj)
+  local inc, petName, biome = incomeOf(entryObj, key)
+  local mut = mutationOf(entryObj)
+  local mine = false
+  local bpos = myBase()
+  if bpos and dist(pos, bpos) < S.baseGuard then mine = true end
+  local ap = entryObj.Parent
+  while ap and ap ~= Workspace do
+    if ap == LP.Character then mine = true break end
+    ap = ap.Parent
+  end
+  return {
+    obj    = entryObj,
+    part   = part,
+    pos    = pos,
+    rar    = rar,
+    key    = key,
+    pet    = petName,
+    biome  = biome or zoneOf(pos),
+    income = inc,
+    mut    = mut,
+    mult   = mut and MUT_MULT[mut] or 1,
+    wt     = weightOf(entryObj),
+    mine   = mine,
+    rare   = rare or false,
+    kind   = kind,
+  }
+end
+
+local function scanSlotEggs()
+  local out = {}
+  local sl = Workspace:FindFirstChild("AreaEggSlotsClient")
+  if sl then
+    for _, s in ipairs(sl:GetChildren()) do
+      local e = eggFromEntry(s, nil, s:FindFirstChild("RareAreaEggHighlight") ~= nil)
+      if e then
+        if s:FindFirstChild("MonsterParasiteVisual") then e.kind = "parasite" end
+        out[#out + 1] = e
+      end
+    end
+  end
+  -- telur event: objek Workspace berdiri sendiri dengan anak Hitbox
+  for _, obj in ipairs(Workspace:GetChildren()) do
+    if obj:IsA("Model") and obj:FindFirstChild("Hitbox") then
+      local e = eggFromEntry(obj, "event", findNamed(obj, "RareAreaEggHighlight") ~= nil)
+      if e then
+        if findNamed(obj, "MonsterParasiteVisual") then e.kind = "parasite" end
+        out[#out + 1] = e
+      end
+    end
+  end
+  return out
+end
+
 -- Telur milik sendiri (sudah di base) ditandai `mine` supaya loop steal tidak
 -- memilihnya lagi — itu penyebab "mundar-mandir di base".
 local function scanEggs()
   local out = {}
   local seen = {}
   local base = myBase()
+
+  -- 1. telur game nyata (slot AreaEggSlotsClient + telur event) — lihat v6 di atas
+  for _, e in ipairs(scanSlotEggs()) do
+    seen[e.obj] = true
+    if e.part then seen[e.part] = true end
+    out[#out + 1] = e
+  end
+
+  -- 2. deteksi nama generik (game/event lain): nama memuat 'egg' atau cocok db
   for _, v in ipairs(Workspace:GetDescendants()) do
     if (v:IsA("Model") or v:IsA("BasePart")) and not seen[v] then
       local nameHit = isEggName(v.Name)
@@ -198,7 +374,7 @@ local function scanEggs()
               rar    = rar,
               key    = key,
               pet    = petName,
-              biome  = biome,
+              biome  = biome or zoneOf(pos),
               income = inc,
               mut    = mut,
               mult   = mut and MUT_MULT[mut] or 1,
