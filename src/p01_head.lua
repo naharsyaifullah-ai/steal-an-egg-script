@@ -65,6 +65,7 @@ local S = {
   stealDelay   = 0.25,
   stealSpeed   = 180,      -- kecepatan khusus saat steal (stud/detik)
   takeUnknown  = true,     -- telur yang tidak dikenal database tetap diambil
+  takePlots    = false,    -- ambil telur dari base pemain lain (default: TIDAK)
   baseGuard    = 60,       -- telur sedekat ini ke base sendiri diabaikan
   grabTries    = 3,        -- berapa kali usaha ambil per telur
   blindFire    = false,    -- tembak remote hasil TEBAKAN nama (mati by default)

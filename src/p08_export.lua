@@ -31,8 +31,10 @@ do
       fireSmartPrompts   = fireSmartPrompts,
       zoneOf             = zoneOf,
       scanSlotEggs       = scanSlotEggs,
+      plotState          = plotState,
       firstPartOf        = firstPartOf,
       findNamed          = findNamed,
+      heldByOther        = heldByOther,
       flushBaseCache     = flushBaseCache,
       -- database pet
       DB           = DB,
