@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Production-mode check: load the script WITHOUT the SAE_TEST flag and prove
 that (a) it still runs clean, (b) it leaks no SAE global into the game env."""
-import pathlib, re, subprocess, sys
+import pathlib, re, shutil, subprocess, sys
 
-SAE = pathlib.Path("/root/sae")
-LUAU = "/tmp/luaubin/luau"
-BUILT = pathlib.Path("/root/sae/sae.lua")
+SAE = pathlib.Path(__file__).resolve().parents[1]
+LUAU = shutil.which("luau") or "/tmp/luaubin/luau"
+BUILT = SAE / "sae.lua"
 BUNDLE = pathlib.Path("/tmp/sae_prod_bundle.lua")
 
 parts = [
