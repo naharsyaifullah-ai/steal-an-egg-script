@@ -2,10 +2,15 @@
      with the real Luau interpreter. Only the APIs the script touches are
      implemented — enough to prove the logic, not a Roblox reimplementation. ]]
 
+-- do-end scope: local register Luau maks 200 per fungsi; harness dan script
+-- digabung dalam satu chunk, jadi tiap bagian harus membebaskan register-nya.
+-- vec & newSignal dipakai lintas bagian sehingga dibiarkan global.
+do
+
 -- ---------- Vector3 ----------
 local V3 = {}
 V3.__index = V3
-local function vec(x, y, z) return setmetatable({ X = x or 0, Y = y or 0, Z = z or 0 }, V3) end
+function vec(x, y, z) return setmetatable({ X = x or 0, Y = y or 0, Z = z or 0 }, V3) end
 function V3.__add(a, b) return vec(a.X + b.X, a.Y + b.Y, a.Z + b.Z) end
 function V3.__sub(a, b) return vec(a.X - b.X, a.Y - b.Y, a.Z - b.Z) end
 function V3.__mul(a, b)
@@ -62,7 +67,7 @@ Enum = {
 }
 
 -- ---------- Signal ----------
-local function newSignal()
+function newSignal()
   local s = { _fns = {} }
   function s:Connect(fn) table.insert(self._fns, fn); return { Disconnect = function() end } end
   function s:Fire(...) for _, fn in ipairs(self._fns) do fn(...) end end
@@ -257,3 +262,5 @@ function INST:_ensureClientEvent()
   if not p.OnClientEvent then p.OnClientEvent = newSignal() end
   return p.OnClientEvent
 end
+
+end -- mock_env scope

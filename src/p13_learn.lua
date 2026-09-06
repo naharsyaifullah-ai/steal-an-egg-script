@@ -73,6 +73,13 @@ task.spawn(function()
 
           if taken then
             SPY.learnFrom(obj, LEARN.started)
+            -- v6: resep langsung ditulis ke berkas — AJARI cukup sekali,
+            -- sesi berikutnya memuatnya otomatis
+            pcall(function()
+              if SPY.saveRecipe() then
+                SPY.note = SPY.note .. " · tersimpan di berkas"
+              end
+            end)
             SPY.lastPickup = tostring(obj.Name)
             LEARN.active = false
             LEARN.done = true

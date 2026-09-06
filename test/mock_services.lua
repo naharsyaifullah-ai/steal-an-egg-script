@@ -1,4 +1,5 @@
 -- ---------- services ----------
+do -- scope register harness
 local Workspace   = Instance.new("Folder"); Workspace.Name = "Workspace"
 local RS          = Instance.new("Folder"); RS.Name = "ReplicatedStorage"
 local CoreGui     = Instance.new("Folder"); CoreGui.Name = "CoreGui"
@@ -86,6 +87,17 @@ end
 function firetouchinterest(a, b, s)
   TOUCH_FIRED = TOUCH_FIRED + 1
   if s == 1 then SIM_GRANT(b) end
+end
+
+-- ---------- fake executor filesystem + loadstring ----------
+-- Dipakai menguji persistensi resep AJARI (writefile/readfile/isfile).
+MOCKFS = {}
+function writefile(name, data) MOCKFS[name] = tostring(data) return true end
+function readfile(name) return MOCKFS[name] end
+function isfile(name) return MOCKFS[name] ~= nil end
+if type(loadstring) ~= "function" then
+  local _load = load or loadstring
+  loadstring = function(src, name) return _load(src, name or "=recipe") end
 end
 
 -- ---------- fake scheduler: run task.spawn bodies on demand ----------
@@ -195,3 +207,5 @@ MOCK = {
   Players = PlayersSvc, LocalPlayer = LocalPlayer,
   UIS = UIS,
 }
+
+end -- mock_services scope

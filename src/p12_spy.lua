@@ -17,6 +17,7 @@ local SPY = {
   note       = "belum merekam",
   fires      = 0,
   lastPickup = nil,
+  onDisk     = false,     -- resep tersimpan di berkas executor?
 }
 
 local MAXLOG = 60
@@ -318,12 +319,97 @@ function SPY.replay(eggObj)
   return ok
 end
 
+-- ---------- PERSISTENSI (v6) ----------
+-- Keluhan "masa harus diajari terus": sekarang resep hasil AJARI ditulis ke
+-- berkas executor (writefile) dan dimuat ulang otomatis saat script jalan
+-- lagi di lain waktu. AJARI cukup sekali.
+local RECIPE_FILE = "SAE_Recipe.lua"
+
+local function litOut(v)
+  local t = type(v)
+  if t == "string" then return string.format("%q", v) end
+  if t == "number" or t == "boolean" then return tostring(v) end
+  if v == nil then return "nil" end
+  return nil            -- Instance/func/tabel dalam: tidak bisa disimpan
+end
+
+local function slotStorable(slot)
+  if slot.kind == "egg" or slot.kind == "eggname" then return true end
+  if slot.kind == "literal" then return litOut(slot.value) ~= nil end
+  if slot.kind == "table" then
+    for k, v in pairs(slot.value) do
+      if litOut(k) == nil or litOut(v) == nil then return false end
+    end
+    return true
+  end
+  return false
+end
+
+function SPY.saveRecipe()
+  local L = SPY.learned
+  if not (L and L.template and L.name and L.method) then return false end
+  if type(writefile) ~= "function" then return false end
+  local parts = {}
+  for i, slot in ipairs(L.template) do
+    if not slotStorable(slot) then return false end
+    if slot.kind == "egg" then
+      parts[i] = '{kind="egg"}'
+    elseif slot.kind == "eggname" then
+      parts[i] = '{kind="eggname"}'
+    elseif slot.kind == "table" then
+      local kv = {}
+      for k, v in pairs(slot.value) do
+        kv[#kv + 1] = "[" .. litOut(k) .. "]=" .. litOut(v)
+      end
+      parts[i] = '{kind="table", value={' .. table.concat(kv, ",") .. '}}'
+    else
+      parts[i] = '{kind="literal", value=' .. litOut(slot.value) .. '}'
+    end
+  end
+  local src = "return {name=" .. string.format("%q", L.name)
+    .. ", method=" .. string.format("%q", L.method)
+    .. ", template={" .. table.concat(parts, ",") .. "}}"
+  local ok = pcall(writefile, RECIPE_FILE, src)
+  if ok then SPY.onDisk = true end
+  return ok
+end
+
+function SPY.loadRecipe()
+  SPY.onDisk = false
+  if not (type(readfile) == "function" and type(isfile) == "function"
+    and type(loadstring) == "function") then return false end
+  local ok, exists = pcall(isfile, RECIPE_FILE)
+  if not (ok and exists) then return false end
+  local ok2, src = pcall(readfile, RECIPE_FILE)
+  if not (ok2 and type(src) == "string") then return false end
+  local okc, chunk = pcall(loadstring, src)
+  if not (okc and type(chunk) == "function") then return false end
+  local okr, data = pcall(chunk)
+  if not (okr and type(data) == "table" and data.name and data.method
+    and type(data.template) == "table") then return false end
+  for _, slot in ipairs(data.template) do
+    if not (type(slot) == "table" and slot.kind) then return false end
+  end
+  -- remote diselesaikan ulang lewat nama: path bisa berubah antar update game
+  local remote = findRemoteByName(data.name)
+  if not remote then return false end
+  SPY.learned = { name = data.name, method = data.method,
+    remote = remote, template = data.template }
+  SPY.learnedFrom = "remote"
+  SPY.onDisk = true
+  SPY.note = "resep dimuat dari berkas: " .. data.name
+  return true
+end
+
+pcall(function() SPY.loadRecipe() end)
+
 function SPY.summary()
   local lines = {}
   lines[#lines + 1] = "status : " .. SPY.note
   lines[#lines + 1] = "hook   : " .. (SPY.hooked and "aktif" or "TIDAK aktif")
   lines[#lines + 1] = "rekam  : " .. (SPY.recording and "MENYALA" or "mati")
   lines[#lines + 1] = "tembakan tercatat: " .. SPY.fires
+  lines[#lines + 1] = "berkas : " .. (SPY.onDisk and "resep tersimpan (dimuat otomatis)" or "belum ada resep tersimpan")
   if SPY.learned then
     lines[#lines + 1] = "dipakai: " .. SPY.learned.name
       .. ":" .. SPY.learned.method

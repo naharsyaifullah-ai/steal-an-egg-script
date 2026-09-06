@@ -1,14 +1,22 @@
 --[[
-  STEAL AN EGG — Delta Hub v3
-  Hermes Agent · 5 Sep 2026
+  STEAL AN EGG — Delta Hub v6
+  Hermes Agent · 6 Sep 2026
   https://github.com/naharsyaifullah-ai/steal-an-egg-script
 
-  Perbaikan v3 (dari laporan bug):
-   · rarity dibaca dari DATABASE 80 pet, bukan label teks — dulu hampir semua
-     telur tak terbaca sehingga cuma satu rarity yang kena filter
-   · jalan pakai Humanoid:MoveTo, TIDAK terbang, tidak jatuh terhuyung
-   · kecepatan steal punya slider sendiri di tab STEAL
-   · ESP menampilkan rarity + nama pet + income $/s + mutasi + berat + jarak
+  Perbaikan v6 (diselidiki dari script autofarm publik yang masih berfungsi):
+   · telur game ini TIDAK bernama "Egg" — mereka hidup di
+     workspace.AreaEggSlotsClient (slot berisi part "Plane"), telur event
+     berdiri sendiri dengan anak "Hitbox". v5 mencari nama 'egg' → ESP dan
+     auto steal sama-sama tidak menemukan apa pun. v6 memindai struktur asli
+     ini + tetap memakai deteksi nama generik sebagai cadangan.
+   · prompt ambil game ini DIPUSATKAN di workspace.SmartPromptPart, bukan di
+     dalam telur — fireSmartPrompts() menembaknya dengan HoldDuration = 0.
+   · resep hasil AJARI tersimpan ke berkas executor (writefile) dan dimuat
+     ulang otomatis — AJARI cukup sekali, bukan tiap sesi.
+   · base dibaca dari workspace.Plots (pemilik dicocokkan dengan nama),
+     zona peta (11 zona) dari koordinat terukur.
+   · tombol "Geledah struktur game" membedah AreaEggSlotsClient, prompt,
+     Plots, dan module ReplicatedStorage kalau data masih belum cocok.
 
   Resiko: cheat bisa kena ban. Pakai akun cadangan.
 ]]
@@ -369,6 +377,54 @@ end
 
 local function dist(a, b) return (a - b).Magnitude end
 
+-- cari BasePart pertama secara REKURSIF. FindFirstChildWhichIsA di beberapa
+-- executor/game hanya mencari anak langsung, padahal telur event menaruh
+-- Plane-nya di dalam Model beberapa lapis.
+local function firstPartOf(obj)
+  if not obj then return nil end
+  if obj:IsA("BasePart") then return obj end
+  for _, d in ipairs(obj:GetDescendants()) do
+    if d:IsA("BasePart") then return d end
+  end
+  return nil
+end
+
+local function findNamed(obj, name)
+  if not obj then return nil end
+  if obj.Name == name then return obj end
+  for _, d in ipairs(obj:GetDescendants()) do
+    if d.Name == name then return d end
+  end
+  return nil
+end
+
+-- Zona peta diukur dari game nyata (dipakai script autofarm publik yang masih
+-- berfungsi per Agu 2026): zona tersusun sepanjang sumbu X, pita Z tetap.
+-- Dipakai sebagai nama biome cadangan kalau database tidak mengenal pet-nya.
+local ZONES = {
+  { name = "Forest",         minX = 553.42,  maxX = 646.49  },
+  { name = "Lake",           minX = 653.01,  maxX = 793.51  },
+  { name = "Desert",         minX = 796.48,  maxX = 1005.04 },
+  { name = "Jungle",         minX = 1008.56, maxX = 1240.12 },
+  { name = "Snow",           minX = 1244.13, maxX = 1564.18 },
+  { name = "Volcano",        minX = 1568.33, maxX = 1949.58 },
+  { name = "Abyss Ocean",    minX = 1953.30, maxX = 2378.73 },
+  { name = "Prehistoric",    minX = 2382.87, maxX = 2884.09 },
+  { name = "Cosmic",         minX = 2888.03, maxX = 3523.51 },
+  { name = "Cherry Blossom", minX = 3527.67, maxX = 4263.53 },
+  { name = "Titan Temple",   minX = 4268.09, maxX = 5123.06 },
+}
+local ZONE_MINZ, ZONE_MAXZ = -433.40, -295.05
+
+local function zoneOf(pos)
+  if not pos then return nil end
+  if pos.Z < ZONE_MINZ or pos.Z > ZONE_MAXZ then return nil end
+  for _, z in ipairs(ZONES) do
+    if pos.X >= z.minX and pos.X <= z.maxX then return z.name end
+  end
+  return nil
+end
+
 -- Kumpulkan SEMUA teks yang mungkin memuat nama pet: nama objek, nama induk,
 -- label, value, DAN Attribute. Attribute adalah yang paling sering dipakai game
 -- modern dan tidak dibaca v4 — itulah sebabnya ESP bilang "tidak ada di
@@ -487,19 +543,74 @@ end
 -- ============ SCAN OBJEK ============
 -- myBase() harus didefinisikan SEBELUM scanEggs() karena scanEggs memakainya;
 -- kalau ditaruh di bawah, Lua membacanya sebagai global nil dan scan meledak.
+local baseCache, baseCacheT = nil, -1e9
+local function flushBaseCache()
+  baseCache, baseCacheT = nil, -1e9
+end
+
+local function plotOwnerIsMe(plot)
+  local hit = false
+  pcall(function()
+    for _, key in ipairs({ "Owner", "OwnerName", "Player", "PlayerName" }) do
+      local o = plot:FindFirstChild(key)
+      if o and o:IsA("ValueBase") and tostring(o.Value) == LP.Name then hit = true end
+    end
+  end)
+  if not hit then
+    pcall(function()
+      for _, v in pairs(plot:GetAttributes()) do
+        if tostring(v) == LP.Name then hit = true break end
+      end
+    end)
+  end
+  if not hit then
+    for _, d in ipairs(plot:GetDescendants()) do
+      if d:IsA("StringValue") and tostring(d.Value) == LP.Name then hit = true break end
+      if d:IsA("TextLabel") and tostring(d.Text):find(LP.Name, 1, true) then hit = true break end
+    end
+  end
+  return hit
+end
+
 local function myBase()
+  if tick() - baseCacheT < 5 then return baseCache end
+
+  -- game nyata: plot pemain ada di workspace.Plots (terverifikasi Agu 2026)
+  local plots = Workspace:FindFirstChild("Plots")
+  if plots then
+    for _, plot in ipairs(plots:GetChildren()) do
+      if (plot:IsA("Model") or plot:IsA("BasePart")) and plotOwnerIsMe(plot) then
+        local p = posOf(plot) or (plot:IsA("Model") and plot:GetPivot().Position)
+        if p then baseCache, baseCacheT = p, tick(); return p end
+      end
+    end
+    -- tanpa penanda pemilik: plot terdekat ke spawn kita (pemain lahir di plot sendiri)
+    local best, bestD = nil, math.huge
+    for _, plot in ipairs(plots:GetChildren()) do
+      local sp = plot:FindFirstChild("SpawnLocation")
+      if sp and sp:IsA("BasePart") then
+        local d = math.abs(sp.Position.X) + math.abs(sp.Position.Z)
+        if d < bestD then bestD, best = d, sp.Position end
+      end
+    end
+    if best then baseCache, baseCacheT = best, tick(); return best end
+  end
+
+  -- cadangan: objek bernama base/plot/garden dengan penanda pemain (game lain)
   for _, v in ipairs(Workspace:GetDescendants()) do
     local n = lower(v.Name)
     if (v:IsA("BasePart") or v:IsA("Model")) and (n:find("base") or n:find("plot") or n:find("garden")) then
       for _, key in ipairs({ "Owner", "OwnerName", "Player", "PlayerName" }) do
         local o = v:FindFirstChild(key)
         if o and o:IsA("ValueBase") and tostring(o.Value) == LP.Name then
-          return posOf(v) or (v:IsA("Model") and v:GetPivot().Position)
+          local p = posOf(v) or (v:IsA("Model") and v:GetPivot().Position)
+          if p then baseCache, baseCacheT = p, tick(); return p end
         end
       end
       for _, d in ipairs(v:GetDescendants()) do
         if d:IsA("TextLabel") and tostring(d.Text):find(LP.Name) then
-          return posOf(v)
+          local p = posOf(v)
+          if p then baseCache, baseCacheT = p, tick(); return p end
         end
       end
     end
@@ -508,12 +619,85 @@ local function myBase()
   return sp and sp.Position or nil
 end
 
+-- ============ TELUR GAME NYATA (v6) ============
+-- Game ini TIDAK menamai telurnya "Egg": telur hidup di
+-- workspace.AreaEggSlotsClient (tiap slot punya part "Plane"), telur event
+-- berdiri sendiri dengan anak "Hitbox", telur langka bertanda
+-- "RareAreaEggHighlight", telur parasit "MonsterParasiteVisual". Versi lama
+-- mencari nama 'egg' → tidak menemukan apa pun → "pet tidak ada di database".
+local function eggFromEntry(entryObj, kind, rare)
+  local part = entryObj:FindFirstChild("Plane") or firstPartOf(entryObj)
+  if not (part and part:IsA("BasePart")) then return nil end
+  local pos = part.Position
+  local rar, key = rarityOf(entryObj)
+  local inc, petName, biome = incomeOf(entryObj, key)
+  local mut = mutationOf(entryObj)
+  local mine = false
+  local bpos = myBase()
+  if bpos and dist(pos, bpos) < S.baseGuard then mine = true end
+  local ap = entryObj.Parent
+  while ap and ap ~= Workspace do
+    if ap == LP.Character then mine = true break end
+    ap = ap.Parent
+  end
+  return {
+    obj    = entryObj,
+    part   = part,
+    pos    = pos,
+    rar    = rar,
+    key    = key,
+    pet    = petName,
+    biome  = biome or zoneOf(pos),
+    income = inc,
+    mut    = mut,
+    mult   = mut and MUT_MULT[mut] or 1,
+    wt     = weightOf(entryObj),
+    mine   = mine,
+    rare   = rare or false,
+    kind   = kind,
+  }
+end
+
+local function scanSlotEggs()
+  local out = {}
+  local sl = Workspace:FindFirstChild("AreaEggSlotsClient")
+  if sl then
+    for _, s in ipairs(sl:GetChildren()) do
+      local e = eggFromEntry(s, nil, s:FindFirstChild("RareAreaEggHighlight") ~= nil)
+      if e then
+        if s:FindFirstChild("MonsterParasiteVisual") then e.kind = "parasite" end
+        out[#out + 1] = e
+      end
+    end
+  end
+  -- telur event: objek Workspace berdiri sendiri dengan anak Hitbox
+  for _, obj in ipairs(Workspace:GetChildren()) do
+    if obj:IsA("Model") and obj:FindFirstChild("Hitbox") then
+      local e = eggFromEntry(obj, "event", findNamed(obj, "RareAreaEggHighlight") ~= nil)
+      if e then
+        if findNamed(obj, "MonsterParasiteVisual") then e.kind = "parasite" end
+        out[#out + 1] = e
+      end
+    end
+  end
+  return out
+end
+
 -- Telur milik sendiri (sudah di base) ditandai `mine` supaya loop steal tidak
 -- memilihnya lagi — itu penyebab "mundar-mandir di base".
 local function scanEggs()
   local out = {}
   local seen = {}
   local base = myBase()
+
+  -- 1. telur game nyata (slot AreaEggSlotsClient + telur event) — lihat v6 di atas
+  for _, e in ipairs(scanSlotEggs()) do
+    seen[e.obj] = true
+    if e.part then seen[e.part] = true end
+    out[#out + 1] = e
+  end
+
+  -- 2. deteksi nama generik (game/event lain): nama memuat 'egg' atau cocok db
   for _, v in ipairs(Workspace:GetDescendants()) do
     if (v:IsA("Model") or v:IsA("BasePart")) and not seen[v] then
       local nameHit = isEggName(v.Name)
@@ -546,7 +730,7 @@ local function scanEggs()
               rar    = rar,
               key    = key,
               pet    = petName,
-              biome  = biome,
+              biome  = biome or zoneOf(pos),
               income = inc,
               mut    = mut,
               mult   = mut and MUT_MULT[mut] or 1,
@@ -628,6 +812,41 @@ local function fireMatch(words, ...)
         end)
         n = n + 1
         break
+      end
+    end
+  end
+  return n
+end
+
+-- cari remote berdasar nama persis — dipakai memuat resep tersimpan
+local function findRemoteByName(name)
+  if not name then return nil end
+  indexRemotes()
+  for _, r in ipairs(remotes) do
+    if r.Name == name then return r end
+  end
+  return nil
+end
+
+-- SmartPromptPart: game ini MEMUSATKAN prompt ambil di sini (bukan prompt di
+-- dalam telur). Tanpa menembaknya, mendekat + sentuh saja tidak pernah
+-- mengambil apa pun. HoldDuration dinolkan dulu: dengan nilai bawaan,
+-- fireproximityprompt sering tidak berefek.
+local function fireSmartPrompts()
+  local n = 0
+  for _, c in ipairs(Workspace:GetChildren()) do
+    if c.Name == "SmartPromptPart" then
+      for _, p in ipairs(c:GetChildren()) do
+        if p:IsA("ProximityPrompt") then
+          pcall(function()
+            p.Enabled = true
+            p.MaxActivationDistance = math.max(p.MaxActivationDistance or 0, 60)
+            p.RequiresLineOfSight = false
+            p.HoldDuration = 0
+            fireproximityprompt(p)
+          end)
+          n = n + 1
+        end
       end
     end
   end
@@ -847,6 +1066,10 @@ local function eggScore(e)
     s = idx * 1000
   end
   if S.preferMutasi and e.mut then s = s + (mult - 1) * 900 end
+  -- telur bertanda RareAreaEggHighlight / parasit diprioritaskan walau
+  -- rarity-nya belum terbaca database
+  if e.rare then s = s + 50000 end
+  if e.kind == "parasite" then s = s + 10000 end
   s = s + math.min((e.wt or 0) / 100000, 400)
   return s
 end
@@ -903,6 +1126,7 @@ local SPY = {
   note       = "belum merekam",
   fires      = 0,
   lastPickup = nil,
+  onDisk     = false,     -- resep tersimpan di berkas executor?
 }
 
 local MAXLOG = 60
@@ -1204,12 +1428,97 @@ function SPY.replay(eggObj)
   return ok
 end
 
+-- ---------- PERSISTENSI (v6) ----------
+-- Keluhan "masa harus diajari terus": sekarang resep hasil AJARI ditulis ke
+-- berkas executor (writefile) dan dimuat ulang otomatis saat script jalan
+-- lagi di lain waktu. AJARI cukup sekali.
+local RECIPE_FILE = "SAE_Recipe.lua"
+
+local function litOut(v)
+  local t = type(v)
+  if t == "string" then return string.format("%q", v) end
+  if t == "number" or t == "boolean" then return tostring(v) end
+  if v == nil then return "nil" end
+  return nil            -- Instance/func/tabel dalam: tidak bisa disimpan
+end
+
+local function slotStorable(slot)
+  if slot.kind == "egg" or slot.kind == "eggname" then return true end
+  if slot.kind == "literal" then return litOut(slot.value) ~= nil end
+  if slot.kind == "table" then
+    for k, v in pairs(slot.value) do
+      if litOut(k) == nil or litOut(v) == nil then return false end
+    end
+    return true
+  end
+  return false
+end
+
+function SPY.saveRecipe()
+  local L = SPY.learned
+  if not (L and L.template and L.name and L.method) then return false end
+  if type(writefile) ~= "function" then return false end
+  local parts = {}
+  for i, slot in ipairs(L.template) do
+    if not slotStorable(slot) then return false end
+    if slot.kind == "egg" then
+      parts[i] = '{kind="egg"}'
+    elseif slot.kind == "eggname" then
+      parts[i] = '{kind="eggname"}'
+    elseif slot.kind == "table" then
+      local kv = {}
+      for k, v in pairs(slot.value) do
+        kv[#kv + 1] = "[" .. litOut(k) .. "]=" .. litOut(v)
+      end
+      parts[i] = '{kind="table", value={' .. table.concat(kv, ",") .. '}}'
+    else
+      parts[i] = '{kind="literal", value=' .. litOut(slot.value) .. '}'
+    end
+  end
+  local src = "return {name=" .. string.format("%q", L.name)
+    .. ", method=" .. string.format("%q", L.method)
+    .. ", template={" .. table.concat(parts, ",") .. "}}"
+  local ok = pcall(writefile, RECIPE_FILE, src)
+  if ok then SPY.onDisk = true end
+  return ok
+end
+
+function SPY.loadRecipe()
+  SPY.onDisk = false
+  if not (type(readfile) == "function" and type(isfile) == "function"
+    and type(loadstring) == "function") then return false end
+  local ok, exists = pcall(isfile, RECIPE_FILE)
+  if not (ok and exists) then return false end
+  local ok2, src = pcall(readfile, RECIPE_FILE)
+  if not (ok2 and type(src) == "string") then return false end
+  local okc, chunk = pcall(loadstring, src)
+  if not (okc and type(chunk) == "function") then return false end
+  local okr, data = pcall(chunk)
+  if not (okr and type(data) == "table" and data.name and data.method
+    and type(data.template) == "table") then return false end
+  for _, slot in ipairs(data.template) do
+    if not (type(slot) == "table" and slot.kind) then return false end
+  end
+  -- remote diselesaikan ulang lewat nama: path bisa berubah antar update game
+  local remote = findRemoteByName(data.name)
+  if not remote then return false end
+  SPY.learned = { name = data.name, method = data.method,
+    remote = remote, template = data.template }
+  SPY.learnedFrom = "remote"
+  SPY.onDisk = true
+  SPY.note = "resep dimuat dari berkas: " .. data.name
+  return true
+end
+
+pcall(function() SPY.loadRecipe() end)
+
 function SPY.summary()
   local lines = {}
   lines[#lines + 1] = "status : " .. SPY.note
   lines[#lines + 1] = "hook   : " .. (SPY.hooked and "aktif" or "TIDAK aktif")
   lines[#lines + 1] = "rekam  : " .. (SPY.recording and "MENYALA" or "mati")
   lines[#lines + 1] = "tembakan tercatat: " .. SPY.fires
+  lines[#lines + 1] = "berkas : " .. (SPY.onDisk and "resep tersimpan (dimuat otomatis)" or "belum ada resep tersimpan")
   if SPY.learned then
     lines[#lines + 1] = "dipakai: " .. SPY.learned.name
       .. ":" .. SPY.learned.method
@@ -1534,8 +1843,10 @@ end
 local function grabAttempt(e)
   local acts = 0
 
-  -- 1. selalu: prompt di dalam telur + sentuh semua part (cara pemain asli)
+  -- 1. selalu: prompt di dalam telur + SmartPromptPart (pusat prompt game ini)
+  --    + prompt lain yang dekat + sentuh semua part (cara pemain asli)
   acts = acts + promptsInside(e.obj, 26)
+  acts = acts + fireSmartPrompts()
   acts = acts + pressPromptsNear(30)
   acts = acts + touchAllParts(e.obj)
 
@@ -1816,6 +2127,8 @@ task.spawn(function()
 
               -- baris 3: biome, berat, jarak
               local bits = {}
+              if e.rare then bits[#bits + 1] = "RARE" end
+              if e.kind == "parasite" then bits[#bits + 1] = "PARASIT" end
               if e.biome then bits[#bits + 1] = e.biome end
               local w = kg(e.wt)
               if w then bits[#bits + 1] = w end
@@ -1933,6 +2246,13 @@ task.spawn(function()
 
           if taken then
             SPY.learnFrom(obj, LEARN.started)
+            -- v6: resep langsung ditulis ke berkas — AJARI cukup sekali,
+            -- sesi berikutnya memuatnya otomatis
+            pcall(function()
+              if SPY.saveRecipe() then
+                SPY.note = SPY.note .. " · tersimpan di berkas"
+              end
+            end)
             SPY.lastPickup = tostring(obj.Name)
             LEARN.active = false
             LEARN.done = true
@@ -2514,7 +2834,9 @@ local learnTxt = Instance.new("TextLabel")
 learnTxt.Size = UDim2.new(1, 0, 0, 0)
 learnTxt.AutomaticSize = Enum.AutomaticSize.Y
 learnTxt.BackgroundTransparency = 1
-learnTxt.Text = "belum merekam.\ntekan tombol di bawah, lalu ambil SATU telur pakai tanganmu sendiri."
+learnTxt.Text = SPY.onDisk
+  and ("resep tersimpan di berkas executor — dimuat otomatis.\ntekan 'Lihat cara ambil terpelajari' untuk melihatnya.")
+  or  ("belum ada resep tersimpan.\ntekan tombol di bawah, lalu ambil SATU telur pakai tanganmu sendiri.\n(sekali saja — hasilnya tersimpan permanen)")
 learnTxt.Font = Enum.Font.Code
 learnTxt.TextSize = 10
 learnTxt.TextColor3 = T.txt2
@@ -2810,6 +3132,56 @@ diagTxt.TextYAlignment = Enum.TextYAlignment.Top
 diagTxt.TextWrapped = true
 diagTxt.Parent = diagScroll
 
+action(pEsp, "Geledah struktur game (slot telur + prompt)", function()
+  local lines = {}
+  local sl = Workspace:FindFirstChild("AreaEggSlotsClient")
+  lines[#lines + 1] = "AreaEggSlotsClient: " .. (sl and #sl:GetChildren() or 0) .. " slot"
+  if sl then
+    for i, s in ipairs(sl:GetChildren()) do
+      if i > 10 then break end
+      local kids = {}
+      for _, d in ipairs(s:GetChildren()) do
+        kids[#kids + 1] = d.Name
+        if #kids >= 6 then break end
+      end
+      lines[#lines + 1] = "  " .. tostring(s.Name) .. " | anak: " .. table.concat(kids, ",")
+      local a = {}
+      pcall(function()
+        for k, v in pairs(s:GetAttributes()) do
+          a[#a + 1] = k .. "=" .. tostring(v)
+        end
+      end)
+      if #a > 0 then lines[#lines + 1] = "     attr: " .. table.concat(a, ", ") end
+    end
+  end
+  local ns = 0
+  for _, c in ipairs(Workspace:GetChildren()) do
+    if c.Name == "SmartPromptPart" then
+      for _, p in ipairs(c:GetChildren()) do
+        if p:IsA("ProximityPrompt") then ns = ns + 1 end
+      end
+    end
+  end
+  lines[#lines + 1] = "SmartPromptPart: " .. ns .. " prompt"
+  local plots = Workspace:FindFirstChild("Plots")
+  lines[#lines + 1] = "Plots: " .. (plots and #plots:GetChildren() or 0) .. " plot"
+  for _, fold in ipairs({ "Data", "Shared", "Packages" }) do
+    local f = RS:FindFirstChild(fold)
+    if f then
+      local kids = {}
+      for _, d in ipairs(f:GetChildren()) do
+        kids[#kids + 1] = d.Name
+        if #kids >= 10 then break end
+      end
+      lines[#lines + 1] = "RS." .. fold .. ": " .. table.concat(kids, ", ")
+    end
+  end
+  diagTxt.Text = table.concat(lines, "\n")
+    .. "\n\n(disalin ke clipboard kalau executor mendukung)"
+  pcall(function() setclipboard(table.concat(lines, "\n")) end)
+  S.status = "geledah struktur: " .. (sl and #sl:GetChildren() or 0) .. " slot, " .. ns .. " prompt"
+end, "gold")
+
 action(pEsp, "Lihat nama asli telur", function()
   local eggs = scanEggs()
   local lines = {}
@@ -2948,7 +3320,8 @@ task.spawn(function()
   end
 end)
 
-print("[SAE v5] loaded · remote=" .. #remotes .. " · db=" .. DB_COUNT)
+print("[SAE v6] loaded · remote=" .. #remotes .. " · db=" .. DB_COUNT
+  .. " · resep=" .. (SPY.onDisk and "termuat" or "belum ada"))
 
 
 -- ============ TAB PREDIKSI ============
@@ -3213,6 +3586,13 @@ do
       indexRemotes = indexRemotes,
       getRemotes   = function() return remotes end,
       pressPromptsNear = pressPromptsNear,
+      findRemoteByName   = findRemoteByName,
+      fireSmartPrompts   = fireSmartPrompts,
+      zoneOf             = zoneOf,
+      scanSlotEggs       = scanSlotEggs,
+      firstPartOf        = firstPartOf,
+      findNamed          = findNamed,
+      flushBaseCache     = flushBaseCache,
       -- database pet
       DB           = DB,
       DB_COUNT     = DB_COUNT,

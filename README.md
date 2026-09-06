@@ -10,6 +10,17 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/naharsyaifullah-ai/st
 
 Copy satu baris di atas ke executor → Execute.
 
+## Yang diperbaiki di v6
+
+"ESP bilang pet tidak ada di database" dan auto steal yang tidak kunjung mengambil ternyata bukan soal database, melainkan **script tidak melihat telurnya sama sekali**. Struktur game yang sebenarnya (diselidiki dari script autofarm publik yang masih berfungsi per Agu–Sep 2026) adalah:
+
+- telur **tidak bernama "Egg"**. Mereka hidup di `workspace.AreaEggSlotsClient` — tiap slot memuat part `Plane` sebagai wujud telurnya; telur event berdiri sendiri sebagai model dengan anak `Hitbox`; telur langka bertanda `RareAreaEggHighlight`, telur parasit `MonsterParasiteVisual`. v3–v5 mencari objek bernama "egg" → tidak menemukan apa pun.
+- tombol ambil (E) game ini **dipusatkan di `workspace.SmartPromptPart`**, bukan di dalam telur. v6 menembak prompt-prompt itu dengan `HoldDuration = 0` — sama seperti cara autofarm yang berfungsi menanganinya. Dengan ini auto steal memakai mekanik resmi game **tanpa perlu diajari dan tanpa menembak remote tebakan**.
+- resep hasil **AJARI sekarang tersimpan permanen** ke berkas executor (`writefile`) dan dimuat ulang otomatis setiap script dijalankan — keluhan "masa harus diajari terus" selesai: ajari sekali, dipakai selamanya (selama remote game tidak berubah nama).
+- base dibaca dari `workspace.Plots` (pemilik dicocokkan dengan nama; cadangan: penanda `Owner` di objek base).
+- nama biome untuk pet di luar database ditentukan dari **koordinat zona terukur** (11 zona: Forest → Titan Temple), bukan dibiarkan kosong.
+- tombol **Geledah struktur game** (tab ESP) membedah `AreaEggSlotsClient`, `SmartPromptPart`, `Plots`, dan module `ReplicatedStorage` (`Data`/`Shared`/`Packages`) lalu menyalinnya — kalau masih ada yang tidak cocok setelah update game, kirim isi geledahannya untuk perbaikan cepat.
+
 ## Yang diperbaiki di v5
 
 Auto steal tetap gagal di v3 dan v4 karena keduanya **menebak** nama remote (`steal`, `pickup`, `grab`, …). Menebak bukan jalan keluar. v5 berhenti menebak dan **merekam cara ambil yang sebenarnya** dari tanganmu sendiri:

@@ -27,6 +27,13 @@ do
       indexRemotes = indexRemotes,
       getRemotes   = function() return remotes end,
       pressPromptsNear = pressPromptsNear,
+      findRemoteByName   = findRemoteByName,
+      fireSmartPrompts   = fireSmartPrompts,
+      zoneOf             = zoneOf,
+      scanSlotEggs       = scanSlotEggs,
+      firstPartOf        = firstPartOf,
+      findNamed          = findNamed,
+      flushBaseCache     = flushBaseCache,
       -- database pet
       DB           = DB,
       DB_COUNT     = DB_COUNT,

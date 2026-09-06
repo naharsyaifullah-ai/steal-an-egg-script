@@ -30,7 +30,11 @@ parts = [
     harness_svc.read_text(),
     world.read_text(),
     "\n-- ===== SCRIPT UNDER TEST =====\n",
+    "-- do-end memberi scope sendiri supaya local-register Luau (maks 200)\n",
+    "-- tidak meledak ketika script dan harness digabung.\n",
+    "do\n",
     BUILT.read_text(),
+    "\nend -- script under test\n",
     "\n-- ===== ASSERTIONS =====\n",
 ]
 # Each assertion file gets its own do...end scope: Luau allows only 200 locals
