@@ -65,6 +65,7 @@ local S = {
   stealDelay   = 0.25,
   stealSpeed   = 180,      -- kecepatan khusus saat steal (stud/detik)
   takeUnknown  = true,     -- telur yang tidak dikenal database tetap diambil
+  takePlots    = false,    -- ambil telur dari base pemain lain (default: TIDAK)
   baseGuard    = 60,       -- telur sedekat ini ke base sendiri diabaikan
   grabTries    = 3,        -- berapa kali usaha ambil per telur
   blindFire    = false,    -- tembak remote hasil TEBAKAN nama (mati by default)
@@ -572,6 +573,37 @@ local function plotOwnerIsMe(plot)
   return hit
 end
 
+-- Apakah objek berada di dalam plot pemain (base)? Telur di base TIDAK boleh
+-- jadi sasaran default: laporan nyata v6 — auto steal malah kabur ke base
+-- orang lain dan mencoba mencuri telur milik pemain, bukan telur liar di zona.
+-- Kembalikan: inPlot, milikPlotSaya
+local function plotState(obj)
+  local plots = Workspace:FindFirstChild("Plots")
+  if not plots then return false, false end
+  local p = obj and obj.Parent
+  while p and p ~= Workspace do
+    if p.Parent == plots then
+      return true, plotOwnerIsMe(p)
+    end
+    p = p.Parent
+  end
+  return false, false
+end
+
+-- Telur yang sedang DIBAWA pemain lain juga milik orang: karakter yang
+-- memegangnya akan dikejar kalau tidak disaring — itu laporan nyata kedua.
+local function heldByOther(obj)
+  local p = obj and obj.Parent
+  while p and p ~= Workspace do
+    if p:IsA("Model") and p:FindFirstChildOfClass("Humanoid") then
+      local pl = Players:GetPlayerFromCharacter(p)
+      if pl then return pl ~= LP end
+    end
+    p = p.Parent
+  end
+  return false
+end
+
 local function myBase()
   if tick() - baseCacheT < 5 then return baseCache end
 
@@ -640,6 +672,9 @@ local function eggFromEntry(entryObj, kind, rare)
     if ap == LP.Character then mine = true break end
     ap = ap.Parent
   end
+  local inPlot, myPlot = plotState(entryObj)
+  if myPlot then mine = true end
+  local owned = inPlot or heldByOther(entryObj)
   return {
     obj    = entryObj,
     part   = part,
@@ -653,6 +688,7 @@ local function eggFromEntry(entryObj, kind, rare)
     mult   = mut and MUT_MULT[mut] or 1,
     wt     = weightOf(entryObj),
     mine   = mine,
+    owned  = owned,      -- telur ini milik/dipegang pemain lain
     rare   = rare or false,
     kind   = kind,
   }
@@ -724,6 +760,8 @@ local function scanEggs()
               if ap == LP.Character then mine = true break end
               ap = ap.Parent
             end
+            local inPlot, myPlot = plotState(v)
+            if myPlot then mine = true end
             out[#out + 1] = {
               obj    = v,
               pos    = pos,
@@ -736,6 +774,7 @@ local function scanEggs()
               mult   = mut and MUT_MULT[mut] or 1,
               wt     = weightOf(v),
               mine   = mine,
+              owned  = inPlot or heldByOther(v),
             }
           end
         end
@@ -1095,7 +1134,10 @@ local function pickEgg()
     end
     local okWt = (S.minWeight <= 0) or ((e.wt or 0) >= S.minWeight)
     local okInc = (S.minIncome <= 0) or ((e.income or 0) >= S.minIncome)
-    if okRar and okWt and okInc and not e.mine and not nearOwnBase(e.pos) then
+    -- telur di base pemain lain hanya kalau pengguna menyalakannya sendiri:
+    -- default hanya telur liar di zona (laporan nyata: steal kabur ke base orang)
+    local okPlot = S.takePlots or not e.owned
+    if okRar and okWt and okInc and okPlot and not e.mine and not nearOwnBase(e.pos) then
       local d = dist(h.Position, e.pos)
       if d <= S.maxRange then
         local sc = eggScore(e) - d * 0.08
@@ -1881,7 +1923,18 @@ task.spawn(function()
       local ok, err = pcall(function()
         local e = pickEgg()
         if not e then
-          S.status = "nunggu telur cocok"
+          -- jujur soal kenapa tidak ada target: peta kosong, filter, atau
+          -- semua telur memang di base pemain lain (bukan sasaran default)
+          local wild, total = 0, 0
+          for _, x in ipairs(scanEggs()) do
+            if not x.mine then
+              total = total + 1
+              if not x.owned then wild = wild + 1 end
+            end
+          end
+          S.status = (total > 0 and wild == 0)
+            and "semua telur di base pemain — nyalakan toggle 'Ambil dari base pemain' kalau mau"
+            or "nunggu telur cocok"
           return
         end
 
@@ -2105,8 +2158,11 @@ task.spawn(function()
               elseif e.rar then
                 head = e.rar
               else
-                -- pakai nama objek apa adanya, jangan menulis "belum diketahui"
-                head = tostring(e.obj.Name):gsub("_", " ")
+                -- nama slot game ini adalah UUID — tampilkan label yang bisa
+                -- dibaca, bukan deretan huruf acak
+                local nm = tostring(e.obj.Name)
+                if #nm == 32 and nm:match("^%x+$") then nm = "Telur zona" end
+                head = nm:gsub("_", " ")
               end
               if e.mut then head = e.mut .. " " .. head end
 
@@ -2129,6 +2185,7 @@ task.spawn(function()
               local bits = {}
               if e.rare then bits[#bits + 1] = "RARE" end
               if e.kind == "parasite" then bits[#bits + 1] = "PARASIT" end
+              if e.owned and not e.mine then bits[#bits + 1] = "MILIK PEMAIN" end
               if e.biome then bits[#bits + 1] = e.biome end
               local w = kg(e.wt)
               if w then bits[#bits + 1] = w end
@@ -2806,6 +2863,9 @@ toggle(pSteal, "Bawa pulang ke base", "matikan kalau mau kumpul dulu",
 toggle(pSteal, "Ambil telur tak dikenal", "telur di luar database tetap diambil",
   function() return S.takeUnknown end, function(v) S.takeUnknown = v end)
 
+toggle(pSteal, "Ambil telur dari base pemain lain", "default MATI: hanya telur liar di zona. nyala = boleh garong base orang",
+  function() return S.takePlots end, function(v) S.takePlots = v end)
+
 toggle(pSteal, "Prioritas telur mutasi", "Spirit Bloom 3x > Rainbow 2.5x > Golden 2x",
   function() return S.preferMutasi end, function(v) S.preferMutasi = v end)
 
@@ -3138,27 +3198,49 @@ action(pEsp, "Geledah struktur game (slot telur + prompt)", function()
   lines[#lines + 1] = "AreaEggSlotsClient: " .. (sl and #sl:GetChildren() or 0) .. " slot"
   if sl then
     for i, s in ipairs(sl:GetChildren()) do
-      if i > 10 then break end
-      local kids = {}
-      for _, d in ipairs(s:GetChildren()) do
-        kids[#kids + 1] = d.Name
-        if #kids >= 6 then break end
-      end
-      lines[#lines + 1] = "  " .. tostring(s.Name) .. " | anak: " .. table.concat(kids, ",")
-      local a = {}
-      pcall(function()
-        for k, v in pairs(s:GetAttributes()) do
-          a[#a + 1] = k .. "=" .. tostring(v)
+      if i > 3 then break end
+      lines[#lines + 1] = "  slot " .. tostring(s.Name) .. " [anak " .. #s:GetChildren() .. "]"
+      local shown = 0
+      for _, d in ipairs(s:GetDescendants()) do
+        if shown >= 12 then break end
+        local desc = "    " .. tostring(d.Name) .. " [" .. tostring(d.ClassName) .. "]"
+        local a = {}
+        pcall(function()
+          for k, v in pairs(d:GetAttributes()) do
+            a[#a + 1] = k .. "=" .. tostring(v)
+          end
+        end)
+        if #a > 0 then desc = desc .. " attr:" .. table.concat(a, ",") end
+        if d:IsA("TextLabel") or d:IsA("TextBox") then
+          desc = desc .. ' teks:"' .. tostring(d.Text):sub(1, 40) .. '"'
         end
-      end)
-      if #a > 0 then lines[#lines + 1] = "     attr: " .. table.concat(a, ", ") end
+        lines[#lines + 1] = desc
+        shown = shown + 1
+      end
     end
   end
   local ns = 0
-  for _, c in ipairs(Workspace:GetChildren()) do
-    if c.Name == "SmartPromptPart" then
-      for _, p in ipairs(c:GetChildren()) do
-        if p:IsA("ProximityPrompt") then ns = ns + 1 end
+  local sp = Workspace:FindFirstChild("SmartPromptPart")
+  if sp then
+    for _, p in ipairs(sp:GetChildren()) do
+      if p:IsA("ProximityPrompt") then
+        ns = ns + 1
+        if ns <= 3 then
+          local desc = "  prompt " .. tostring(p.Name)
+          local pa = {}
+          pcall(function()
+            for k, v in pairs(p:GetAttributes()) do
+              pa[#pa + 1] = k .. "=" .. tostring(v)
+            end
+          end)
+          if #pa > 0 then desc = desc .. " attr:" .. table.concat(pa, ",") end
+          for _, c in ipairs(p:GetChildren()) do
+            if c:IsA("ObjectValue") and c.Value then
+              desc = desc .. " -> " .. tostring(c.Value.Name)
+            end
+          end
+          lines[#lines + 1] = desc
+        end
       end
     end
   end
@@ -3174,6 +3256,26 @@ action(pEsp, "Geledah struktur game (slot telur + prompt)", function()
         if #kids >= 10 then break end
       end
       lines[#lines + 1] = "RS." .. fold .. ": " .. table.concat(kids, ", ")
+    end
+  end
+  -- module data game: di sinilah rarity/pet asli disimpan (RS.Data.Rarity,
+  -- Assets, LimitedEgg, AreaEggResetCycle). require() penuh pcall.
+  local dataF = RS:FindFirstChild("Data")
+  if dataF then
+    for _, mn in ipairs({ "Rarity", "Assets", "LimitedEgg", "AreaEggResetCycle" }) do
+      local m = dataF:FindFirstChild(mn)
+      if m then
+        local ok, mod = pcall(function() return require(m) end)
+        if ok and type(mod) == "table" then
+          local keys, total = {}, 0
+          for k in pairs(mod) do
+            total = total + 1
+            if #keys < 20 then keys[#keys + 1] = tostring(k) end
+          end
+          lines[#lines + 1] = "module Data." .. mn .. " (" .. total .. " kunci): "
+            .. table.concat(keys, ",")
+        end
+      end
     end
   end
   diagTxt.Text = table.concat(lines, "\n")
@@ -3590,8 +3692,10 @@ do
       fireSmartPrompts   = fireSmartPrompts,
       zoneOf             = zoneOf,
       scanSlotEggs       = scanSlotEggs,
+      plotState          = plotState,
       firstPartOf        = firstPartOf,
       findNamed          = findNamed,
+      heldByOther        = heldByOther,
       flushBaseCache     = flushBaseCache,
       -- database pet
       DB           = DB,

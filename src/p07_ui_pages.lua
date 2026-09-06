@@ -20,6 +20,9 @@ toggle(pSteal, "Bawa pulang ke base", "matikan kalau mau kumpul dulu",
 toggle(pSteal, "Ambil telur tak dikenal", "telur di luar database tetap diambil",
   function() return S.takeUnknown end, function(v) S.takeUnknown = v end)
 
+toggle(pSteal, "Ambil telur dari base pemain lain", "default MATI: hanya telur liar di zona. nyala = boleh garong base orang",
+  function() return S.takePlots end, function(v) S.takePlots = v end)
+
 toggle(pSteal, "Prioritas telur mutasi", "Spirit Bloom 3x > Rainbow 2.5x > Golden 2x",
   function() return S.preferMutasi end, function(v) S.preferMutasi = v end)
 
@@ -352,27 +355,49 @@ action(pEsp, "Geledah struktur game (slot telur + prompt)", function()
   lines[#lines + 1] = "AreaEggSlotsClient: " .. (sl and #sl:GetChildren() or 0) .. " slot"
   if sl then
     for i, s in ipairs(sl:GetChildren()) do
-      if i > 10 then break end
-      local kids = {}
-      for _, d in ipairs(s:GetChildren()) do
-        kids[#kids + 1] = d.Name
-        if #kids >= 6 then break end
-      end
-      lines[#lines + 1] = "  " .. tostring(s.Name) .. " | anak: " .. table.concat(kids, ",")
-      local a = {}
-      pcall(function()
-        for k, v in pairs(s:GetAttributes()) do
-          a[#a + 1] = k .. "=" .. tostring(v)
+      if i > 3 then break end
+      lines[#lines + 1] = "  slot " .. tostring(s.Name) .. " [anak " .. #s:GetChildren() .. "]"
+      local shown = 0
+      for _, d in ipairs(s:GetDescendants()) do
+        if shown >= 12 then break end
+        local desc = "    " .. tostring(d.Name) .. " [" .. tostring(d.ClassName) .. "]"
+        local a = {}
+        pcall(function()
+          for k, v in pairs(d:GetAttributes()) do
+            a[#a + 1] = k .. "=" .. tostring(v)
+          end
+        end)
+        if #a > 0 then desc = desc .. " attr:" .. table.concat(a, ",") end
+        if d:IsA("TextLabel") or d:IsA("TextBox") then
+          desc = desc .. ' teks:"' .. tostring(d.Text):sub(1, 40) .. '"'
         end
-      end)
-      if #a > 0 then lines[#lines + 1] = "     attr: " .. table.concat(a, ", ") end
+        lines[#lines + 1] = desc
+        shown = shown + 1
+      end
     end
   end
   local ns = 0
-  for _, c in ipairs(Workspace:GetChildren()) do
-    if c.Name == "SmartPromptPart" then
-      for _, p in ipairs(c:GetChildren()) do
-        if p:IsA("ProximityPrompt") then ns = ns + 1 end
+  local sp = Workspace:FindFirstChild("SmartPromptPart")
+  if sp then
+    for _, p in ipairs(sp:GetChildren()) do
+      if p:IsA("ProximityPrompt") then
+        ns = ns + 1
+        if ns <= 3 then
+          local desc = "  prompt " .. tostring(p.Name)
+          local pa = {}
+          pcall(function()
+            for k, v in pairs(p:GetAttributes()) do
+              pa[#pa + 1] = k .. "=" .. tostring(v)
+            end
+          end)
+          if #pa > 0 then desc = desc .. " attr:" .. table.concat(pa, ",") end
+          for _, c in ipairs(p:GetChildren()) do
+            if c:IsA("ObjectValue") and c.Value then
+              desc = desc .. " -> " .. tostring(c.Value.Name)
+            end
+          end
+          lines[#lines + 1] = desc
+        end
       end
     end
   end
@@ -388,6 +413,26 @@ action(pEsp, "Geledah struktur game (slot telur + prompt)", function()
         if #kids >= 10 then break end
       end
       lines[#lines + 1] = "RS." .. fold .. ": " .. table.concat(kids, ", ")
+    end
+  end
+  -- module data game: di sinilah rarity/pet asli disimpan (RS.Data.Rarity,
+  -- Assets, LimitedEgg, AreaEggResetCycle). require() penuh pcall.
+  local dataF = RS:FindFirstChild("Data")
+  if dataF then
+    for _, mn in ipairs({ "Rarity", "Assets", "LimitedEgg", "AreaEggResetCycle" }) do
+      local m = dataF:FindFirstChild(mn)
+      if m then
+        local ok, mod = pcall(function() return require(m) end)
+        if ok and type(mod) == "table" then
+          local keys, total = {}, 0
+          for k in pairs(mod) do
+            total = total + 1
+            if #keys < 20 then keys[#keys + 1] = tostring(k) end
+          end
+          lines[#lines + 1] = "module Data." .. mn .. " (" .. total .. " kunci): "
+            .. table.concat(keys, ",")
+        end
+      end
     end
   end
   diagTxt.Text = table.concat(lines, "\n")

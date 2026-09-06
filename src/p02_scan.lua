@@ -216,6 +216,37 @@ local function plotOwnerIsMe(plot)
   return hit
 end
 
+-- Apakah objek berada di dalam plot pemain (base)? Telur di base TIDAK boleh
+-- jadi sasaran default: laporan nyata v6 — auto steal malah kabur ke base
+-- orang lain dan mencoba mencuri telur milik pemain, bukan telur liar di zona.
+-- Kembalikan: inPlot, milikPlotSaya
+local function plotState(obj)
+  local plots = Workspace:FindFirstChild("Plots")
+  if not plots then return false, false end
+  local p = obj and obj.Parent
+  while p and p ~= Workspace do
+    if p.Parent == plots then
+      return true, plotOwnerIsMe(p)
+    end
+    p = p.Parent
+  end
+  return false, false
+end
+
+-- Telur yang sedang DIBAWA pemain lain juga milik orang: karakter yang
+-- memegangnya akan dikejar kalau tidak disaring — itu laporan nyata kedua.
+local function heldByOther(obj)
+  local p = obj and obj.Parent
+  while p and p ~= Workspace do
+    if p:IsA("Model") and p:FindFirstChildOfClass("Humanoid") then
+      local pl = Players:GetPlayerFromCharacter(p)
+      if pl then return pl ~= LP end
+    end
+    p = p.Parent
+  end
+  return false
+end
+
 local function myBase()
   if tick() - baseCacheT < 5 then return baseCache end
 
@@ -284,6 +315,9 @@ local function eggFromEntry(entryObj, kind, rare)
     if ap == LP.Character then mine = true break end
     ap = ap.Parent
   end
+  local inPlot, myPlot = plotState(entryObj)
+  if myPlot then mine = true end
+  local owned = inPlot or heldByOther(entryObj)
   return {
     obj    = entryObj,
     part   = part,
@@ -297,6 +331,7 @@ local function eggFromEntry(entryObj, kind, rare)
     mult   = mut and MUT_MULT[mut] or 1,
     wt     = weightOf(entryObj),
     mine   = mine,
+    owned  = owned,      -- telur ini milik/dipegang pemain lain
     rare   = rare or false,
     kind   = kind,
   }
@@ -368,6 +403,8 @@ local function scanEggs()
               if ap == LP.Character then mine = true break end
               ap = ap.Parent
             end
+            local inPlot, myPlot = plotState(v)
+            if myPlot then mine = true end
             out[#out + 1] = {
               obj    = v,
               pos    = pos,
@@ -380,6 +417,7 @@ local function scanEggs()
               mult   = mut and MUT_MULT[mut] or 1,
               wt     = weightOf(v),
               mine   = mine,
+              owned  = inPlot or heldByOther(v),
             }
           end
         end

@@ -127,7 +127,18 @@ task.spawn(function()
       local ok, err = pcall(function()
         local e = pickEgg()
         if not e then
-          S.status = "nunggu telur cocok"
+          -- jujur soal kenapa tidak ada target: peta kosong, filter, atau
+          -- semua telur memang di base pemain lain (bukan sasaran default)
+          local wild, total = 0, 0
+          for _, x in ipairs(scanEggs()) do
+            if not x.mine then
+              total = total + 1
+              if not x.owned then wild = wild + 1 end
+            end
+          end
+          S.status = (total > 0 and wild == 0)
+            and "semua telur di base pemain — nyalakan toggle 'Ambil dari base pemain' kalau mau"
+            or "nunggu telur cocok"
           return
         end
 
@@ -351,8 +362,11 @@ task.spawn(function()
               elseif e.rar then
                 head = e.rar
               else
-                -- pakai nama objek apa adanya, jangan menulis "belum diketahui"
-                head = tostring(e.obj.Name):gsub("_", " ")
+                -- nama slot game ini adalah UUID — tampilkan label yang bisa
+                -- dibaca, bukan deretan huruf acak
+                local nm = tostring(e.obj.Name)
+                if #nm == 32 and nm:match("^%x+$") then nm = "Telur zona" end
+                head = nm:gsub("_", " ")
               end
               if e.mut then head = e.mut .. " " .. head end
 
@@ -375,6 +389,7 @@ task.spawn(function()
               local bits = {}
               if e.rare then bits[#bits + 1] = "RARE" end
               if e.kind == "parasite" then bits[#bits + 1] = "PARASIT" end
+              if e.owned and not e.mine then bits[#bits + 1] = "MILIK PEMAIN" end
               if e.biome then bits[#bits + 1] = e.biome end
               local w = kg(e.wt)
               if w then bits[#bits + 1] = w end

@@ -314,7 +314,10 @@ local function pickEgg()
     end
     local okWt = (S.minWeight <= 0) or ((e.wt or 0) >= S.minWeight)
     local okInc = (S.minIncome <= 0) or ((e.income or 0) >= S.minIncome)
-    if okRar and okWt and okInc and not e.mine and not nearOwnBase(e.pos) then
+    -- telur di base pemain lain hanya kalau pengguna menyalakannya sendiri:
+    -- default hanya telur liar di zona (laporan nyata: steal kabur ke base orang)
+    local okPlot = S.takePlots or not e.owned
+    if okRar and okWt and okInc and okPlot and not e.mine and not nearOwnBase(e.pos) then
       local d = dist(h.Position, e.pos)
       if d <= S.maxRange then
         local sc = eggScore(e) - d * 0.08
