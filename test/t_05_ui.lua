@@ -26,6 +26,7 @@ do
   check("tab FARM ada", A.tabs.FARM ~= nil)
   check("tab PLAYER ada", A.tabs.PLAYER ~= nil)
   check("tab ESP ada", A.tabs.ESP ~= nil)
+  check("tab PREDIKSI ada", A.tabs.PREDIKSI ~= nil)
 
   click(A.tabs.FARM)
   check("klik FARM → halaman FARM tampil",
@@ -35,6 +36,8 @@ do
     A.pages.PLAYER.Visible == true and A.pages.FARM.Visible == false)
   click(A.tabs.ESP)
   check("klik ESP → halaman ESP tampil", A.pages.ESP.Visible == true)
+  click(A.tabs.PREDIKSI)
+  check("klik PREDIKSI → halaman PREDIKSI tampil", A.pages.PREDIKSI.Visible == true)
   click(A.tabs.STEAL)
   check("kembali ke STEAL", A.pages.STEAL.Visible == true)
 
@@ -45,6 +48,17 @@ do
   check("Auto Steal ada di tab STEAL", findRow(A.pages.STEAL, "Auto Steal Egg") ~= nil)
   check("Auto Hatch ada di tab FARM", findRow(A.pages.FARM, "Auto Hatch") ~= nil)
   check("ESP Telur ada di tab ESP", findRow(A.pages.ESP, "ESP Telur") ~= nil)
+
+  -- Semua tab harus masuk ke jendela 330px; sebelumnya PREDIKSI terpotong.
+  local widths, gaps = 0, 0
+  for _, child in ipairs(A.tabbar:GetChildren()) do
+    if child.ClassName == "TextButton" then
+      widths = widths + child.Size.X.Offset
+      gaps = gaps + 1
+    end
+  end
+  check("lima tab muat di tab bar", widths + math.max(0, gaps - 1) * 4 + 8
+    <= A.win.Size.X.Offset - 24, widths)
 end
 
 sect("12. toggle UI mengubah state nyata")
@@ -132,7 +146,23 @@ do
   check("klik orb membuka panel lagi", A.win.Visible == true and A.orb.Visible == false)
 end
 
-sect("15. tombol STOP darurat")
+sect("15. aksi FARM memberi umpan balik")
+do
+  local hatchBtn
+  for _, c in ipairs(A.pages.FARM:GetDescendants()) do
+    if c.ClassName == "TextButton" and c.Text == "Hatch sekarang" then hatchBtn = c end
+  end
+  check("tombol Hatch sekarang ada", hatchBtn ~= nil)
+  if hatchBtn then
+    rawget(R.hatch, "_p")._fired = nil
+    click(hatchBtn)
+    check("Hatch sekarang menembak remote", rawget(R.hatch, "_p")._fired ~= nil)
+    check("aksi FARM melaporkan hasil", A.S.status:find("hatch: 1 remote dikirim", 1, true) ~= nil,
+      A.S.status)
+  end
+end
+
+sect("16. tombol STOP darurat")
 do
   A.S.stealOn = true; A.S.autoHatch = true; A.S.autoClaim = true
   A.S.autoTrain = true; A.S.autoSell = true; A.S.autoUpgrade = true

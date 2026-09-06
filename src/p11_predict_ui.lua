@@ -1,5 +1,5 @@
 -- ============ TAB PREDIKSI ============
-makeTab("PREDIKSI", 92)
+makeTab("PREDIKSI", 70)
 local pPred = makePage("PREDIKSI")
 
 -- panel peringatan jujur di paling atas

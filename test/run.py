@@ -4,11 +4,11 @@
 The luau CLI has no dofile/loadfile/io, so everything must be a single chunk.
 Exit code is derived from the printed FAIL count.
 """
-import pathlib, re, subprocess, sys
+import pathlib, re, shutil, subprocess, sys
 
-SAE = pathlib.Path("/root/sae")
-LUAU = "/tmp/luaubin/luau"
-BUILT = pathlib.Path("/root/sae/sae.lua")
+SAE = pathlib.Path(__file__).resolve().parents[1]
+LUAU = shutil.which("luau") or "/tmp/luaubin/luau"
+BUILT = SAE / "sae.lua"
 BUNDLE = pathlib.Path("/tmp/sae_test_bundle.lua")
 
 # rebuild the product first
@@ -33,12 +33,12 @@ parts = [
     BUILT.read_text(),
     "\n-- ===== ASSERTIONS =====\n",
 ]
-# Each assertion file gets its own do...end scope: Luau allows only 200 locals
-# per function, and the bundled top level blew past that as the suite grew.
+# Each assertion file needs a function scope: a top-level do...end block does
+# not release Luau's local registers, which are limited to 200 per function.
 for a in asserts:
-    parts.append(f"\ndo -- ---- {a.name} ----\n")
+    parts.append(f"\ncoroutine.wrap(function() -- ---- {a.name} ----\n")
     parts.append(a.read_text())
-    parts.append(f"\nend -- {a.name}\n")
+    parts.append(f"\nend)() -- {a.name}\n")
 parts.append("\nREPORT()\n")
 
 BUNDLE.write_text("\n".join(parts))

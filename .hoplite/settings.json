@@ -1,0 +1,26 @@
+{
+	"version": 1,
+	"ports": {
+		"preview": 3000,
+		"additional": {}
+	},
+	"scripts": {
+		"setup": {
+			"enabled": true,
+			"command": "mkdir -p /tmp/luaubin && curl -fsSL https://github.com/luau-lang/luau/releases/download/0.735/luau-ubuntu.zip -o /tmp/luaubin/luau-ubuntu.zip && unzip -qo /tmp/luaubin/luau-ubuntu.zip -d /tmp/luaubin && chmod +x /tmp/luaubin/luau /tmp/luaubin/luau-compile"
+		},
+		"run": {
+			"enabled": true,
+			"command": null
+		},
+		"archive": {
+			"enabled": true,
+			"command": null
+		},
+		"check": {
+			"enabled": true,
+			"command": null
+		}
+	},
+	"mcpServers": []
+}

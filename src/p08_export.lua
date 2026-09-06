@@ -55,6 +55,7 @@ do
       gui          = gui,
       win          = win,
       orb          = orb,
+      tabbar       = tabbar,
       pages        = pages,
       tabs         = tabs,
       showPage     = showPage,

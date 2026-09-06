@@ -120,6 +120,7 @@ corner(hideBtn, 9)
 
 -- tab bar
 local tabbar = Instance.new("Frame")
+tabbar.Name = "TabBar"
 tabbar.Size = UDim2.new(1, -24, 0, 38)
 tabbar.Position = UDim2.new(0, 12, 0, 44)
 tabbar.BackgroundColor3 = T.panel

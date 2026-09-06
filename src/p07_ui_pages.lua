@@ -1,8 +1,9 @@
 -- ============ TAB: STEAL / FARM / PLAYER / ESP ============
-makeTab("STEAL", 70)
-makeTab("FARM", 62)
-makeTab("PLAYER", 74)
-makeTab("ESP", 56)
+-- Lebar ini menjaga seluruh lima tab tetap terlihat di jendela 330 px.
+makeTab("STEAL", 52)
+makeTab("FARM", 46)
+makeTab("PLAYER", 56)
+makeTab("ESP", 40)
 
 local pSteal  = makePage("STEAL")
 local pFarm   = makePage("FARM")
@@ -210,9 +211,23 @@ toggle(pFarm, "Auto Sell pet", "jual pet duplikat",
   function() return S.autoSell end, function(v) S.autoSell = v end)
 
 section(pFarm, "manual")
-action(pFarm, "Hatch sekarang", function() fireMatch({ "hatch", "openegg", "incubat" }) end)
-action(pFarm, "Claim semua uang", function() fireMatch({ "claim", "collectcash", "collectincome" }) end)
-action(pFarm, "Tekan prompt terdekat", function() pressPromptsNear(30) end)
+local function manualRemote(label, words)
+  indexRemotes()
+  local n = fireMatch(words)
+  S.status = n > 0 and (label .. ": " .. n .. " remote dikirim")
+    or (label .. ": remote tidak ditemukan")
+end
+
+action(pFarm, "Hatch sekarang", function()
+  manualRemote("hatch", { "hatch", "openegg", "incubat" })
+end)
+action(pFarm, "Claim semua uang", function()
+  manualRemote("claim", { "claim", "collectcash", "collectincome" })
+end)
+action(pFarm, "Tekan prompt terdekat", function()
+  local n = pressPromptsNear(30)
+  S.status = n > 0 and ("prompt: " .. n .. " ditekan") or "prompt: tidak ada di dekatmu"
+end)
 
 -- --- PLAYER ---
 section(pPlayer, "gerak")
